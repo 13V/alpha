@@ -59,7 +59,11 @@ export function formatNative(value: number | null | undefined, symbol: string): 
 
 export function formatMultiple(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value) || value <= 0) return "—";
-  return `${value >= 100 ? value.toFixed(0) : value.toFixed(2)}x`;
+  if (value >= 100) return `${value.toFixed(0)}x`;
+  const rounded = value.toFixed(2);
+  // "1.00x" printed in loss-red reads as a bug; show the digit that explains it
+  if (rounded === "1.00" && value !== 1) return `${value.toFixed(3)}x`;
+  return `${rounded}x`;
 }
 
 export function formatPct(value: number | null | undefined, digits = 2): string {
@@ -86,9 +90,14 @@ export function formatDuration(hours: number | null | undefined): string {
   return `${(days / 30).toFixed(1)}mo`;
 }
 
-export function formatWhen(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const t = new Date(iso.replace(" ", "T"));
+/**
+ * Dune hands timestamps back as "2026-08-19 23:52:38.000 UTC", which Date
+ * cannot parse. Normalise the zone suffix and the space separator first.
+ */
+export function formatWhen(value: string | null | undefined): string {
+  if (!value) return "—";
+  const normalized = value.trim().replace(/\s+UTC$/i, "Z").replace(" ", "T");
+  const t = new Date(normalized.endsWith("Z") ? normalized : `${normalized}Z`);
   if (Number.isNaN(t.getTime())) return "—";
   return t.toISOString().slice(0, 16).replace("T", " ");
 }

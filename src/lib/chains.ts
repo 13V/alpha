@@ -86,7 +86,7 @@ export const CHAINS: Record<ChainId, Chain> = {
   },
 };
 
-/** The three chains alphawallets ships with, in the order they show in the UI. */
+/** The chains shown up front, in the order they appear in the rail. */
 export const FEATURED_CHAINS: ChainId[] = ["solana", "bnb", "base"];
 
 export const ALL_CHAIN_IDS = Object.keys(CHAINS) as ChainId[];

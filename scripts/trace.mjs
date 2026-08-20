@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Alpha Wallets from the terminal — no web server needed.
+ * Bagtrace from the terminal — no web server needed.
  *
- *   node scripts/top.mjs <contract-address> [options]
+ *   node scripts/trace.mjs <contract-address> [options]
  *
  *   --chain <id>     solana | base | bnb | ethereum | arbitrum | optimism | polygon
  *                    (default: detected from the address shape)
@@ -51,7 +51,7 @@ const token = positionals[0];
 
 if (!token || has("help") || has("h")) {
   console.log(
-    `Usage: node scripts/top.mjs <contract-address> [--chain solana] [--mode traders]\n` +
+    `Usage: node scripts/trace.mjs <contract-address> [--chain solana] [--mode traders]\n` +
       `                           [--limit 100] [--days 90] [--min 50]\n` +
       `                           [--addresses] [--csv out.csv] [--json out.json]`,
   );
@@ -108,7 +108,7 @@ if (mode === "traders") {
 
 // ---------------------------------------------------------------- run
 
-const performance = process.env.DUNE_PERFORMANCE ?? "medium";
+const performance = process.env.DUNE_PERFORMANCE ?? "large";
 process.stderr.write(`Running ${envVar}=${queryId} on ${chain} … `);
 
 const { execution_id } = await duneFetch(`/query/${queryId}/execute`, apiKey, {
@@ -153,6 +153,7 @@ if (has("addresses")) {
     const n = Number(v);
     if (!Number.isFinite(n)) return String(v);
     const abs = Math.abs(n);
+    if (abs >= 1e12) return `${(n / 1e12).toFixed(2)}T`;
     if (abs >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
     if (abs >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
     if (abs >= 1e3) return `${(n / 1e3).toFixed(2)}K`;

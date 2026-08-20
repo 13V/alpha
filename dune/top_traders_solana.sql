@@ -1,23 +1,27 @@
 -- ============================================================================
--- Alpha Wallets — Top traders for a Solana SPL token, ranked by realized PnL.
+-- Bagtrace — Top traders of a Solana SPL token, ranked by realized PnL.
 -- ============================================================================
--- Data source : dex_solana.trades (all Solana DEX/AMM swaps, decimal-adjusted)
---               solana_utils.latest_balances (current balances, for holdings)
+-- Source: dex_solana.trades (every decoded Solana DEX/AMM swap)
+--         solana_utils.latest_balances (one aggregate, for circulating supply)
 --
--- Parameters (create these on the query in Dune):
---   token_address  text    SPL mint address of the token
---   wallet_limit   number  how many wallets to return (100 / 250 / 500)
---   lookback_days  number  only look at trades from the last N days (cost control)
---   min_usd        number  ignore wallets whose total traded volume is below this
+-- Parameters:
+--   token_address  text    SPL mint address
+--   wallet_limit   number  how many wallets to return
+--   lookback_days  number  only scan trades from the last N days (cost control)
+--   min_usd        number  drop wallets whose total traded volume is below this
 --
--- Accounting model: weighted-average cost basis.
---   avg_buy_price  = total USD spent / total tokens bought
---   realized_pnl   = USD received from sells - (avg_buy_price * tokens sold)
---   unrealized_pnl = tokens still held * (last traded price - avg_buy_price)
+-- Accounting: weighted-average cost basis.
+--   avg_buy_price  = USD spent / tokens bought
+--   realized_pnl   = USD received - avg_buy_price * tokens sold (capped at bought)
+--   net_position   = tokens bought - tokens sold, i.e. the bag built on DEXes
+--   unrealized_pnl = net_position * (last traded price - avg_buy_price)
+--
+-- Perf note: the trade table is read exactly once. The market price comes from
+-- a window over the per-wallet aggregate rather than a second pass over fills,
+-- and supply is a single aggregate cross-joined in.
 -- ============================================================================
 
 WITH
--- Both sides of every swap that touches the token, normalised to one row per fill.
 fills AS (
     SELECT
         trader_id                                                   AS wallet,
@@ -28,7 +32,11 @@ fills AS (
         CASE
             WHEN token_sold_mint_address = 'So11111111111111111111111111111111111111112'
             THEN token_sold_amount ELSE 0
-        END                                                         AS sol_amount
+        END                                                         AS sol_amount,
+        CASE
+            WHEN COALESCE(amount_usd, 0) > 0 AND token_bought_amount > 0
+            THEN amount_usd / token_bought_amount
+        END                                                         AS fill_price
     FROM dex_solana.trades
     WHERE token_bought_mint_address = '{{token_address}}'
       AND block_month >= CAST(date_trunc('month', date_add('day', -{{lookback_days}}, now())) AS date)
@@ -46,6 +54,10 @@ fills AS (
         CASE
             WHEN token_bought_mint_address = 'So11111111111111111111111111111111111111112'
             THEN token_bought_amount ELSE 0
+        END,
+        CASE
+            WHEN COALESCE(amount_usd, 0) > 0 AND token_sold_amount > 0
+            THEN amount_usd / token_sold_amount
         END
     FROM dex_solana.trades
     WHERE token_sold_mint_address = '{{token_address}}'
@@ -54,29 +66,10 @@ fills AS (
       AND token_sold_amount > 0
 ),
 
--- Most recent traded price, used to mark remaining bags to market.
-last_price AS (
-    SELECT usd_amount / token_amount AS price
-    FROM fills
-    WHERE usd_amount > 0 AND token_amount > 0
-    ORDER BY block_time DESC
-    LIMIT 1
-),
-
--- Circulating supply = sum of every live balance. Used to turn price into mcap.
 supply AS (
     SELECT SUM(token_balance) AS total_supply
     FROM solana_utils.latest_balances
     WHERE token_mint_address = '{{token_address}}'
-),
-
--- Current bag per owner (a wallet can hold the mint across several token accounts).
-holdings AS (
-    SELECT token_balance_owner AS wallet, SUM(token_balance) AS balance
-    FROM solana_utils.latest_balances
-    WHERE token_mint_address = '{{token_address}}'
-      AND token_balance > 0
-    GROUP BY 1
 ),
 
 per_wallet AS (
@@ -91,73 +84,93 @@ per_wallet AS (
         COUNT_IF(side = 'buy')                                    AS buy_count,
         COUNT_IF(side = 'sell')                                   AS sell_count,
         MIN(block_time)                                           AS first_trade,
-        MAX(block_time)                                           AS last_trade
+        MAX(block_time)                                           AS last_trade,
+        MAX_BY(fill_price, block_time) FILTER (WHERE fill_price IS NOT NULL) AS wallet_last_price,
+        MAX(block_time)                FILTER (WHERE fill_price IS NOT NULL) AS wallet_priced_at
     FROM fills
     GROUP BY 1
+    HAVING SUM(usd_amount) >= {{min_usd}}
+),
+
+marked AS (
+    SELECT
+        w.*,
+        -- most recent priced fill anywhere in the result = the mark price
+        FIRST_VALUE(w.wallet_last_price) OVER (
+            ORDER BY w.wallet_priced_at DESC NULLS LAST
+            ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+        ) AS market_price
+    FROM per_wallet w
 ),
 
 enriched AS (
     SELECT
-        w.wallet,
-        w.tokens_bought,
-        w.tokens_sold,
-        w.usd_spent,
-        w.usd_received,
-        w.sol_spent,
-        w.sol_received,
-        w.buy_count,
-        w.sell_count,
-        w.first_trade,
-        w.last_trade,
-        COALESCE(h.balance, 0)                                        AS tokens_held,
-        w.usd_spent    / NULLIF(w.tokens_bought, 0)                   AS avg_buy_price,
-        w.usd_received / NULLIF(w.tokens_sold,   0)                   AS avg_sell_price,
-        -- realized: only the part of the position that was actually sold
-        w.usd_received
-          - (w.usd_spent / NULLIF(w.tokens_bought, 0))
-            * LEAST(w.tokens_sold, w.tokens_bought)                   AS realized_pnl_usd,
-        -- unrealized: bag still on the table, marked at the last traded price
-        COALESCE(h.balance, 0)
-          * ((SELECT price FROM last_price)
-             - COALESCE(w.usd_spent / NULLIF(w.tokens_bought, 0), 0)) AS unrealized_pnl_usd
-    FROM per_wallet w
-    LEFT JOIN holdings h ON h.wallet = w.wallet
-    WHERE w.usd_spent + w.usd_received >= {{min_usd}}
+        m.wallet,
+        m.tokens_bought,
+        m.tokens_sold,
+        m.usd_spent,
+        m.usd_received,
+        m.sol_spent,
+        m.sol_received,
+        m.buy_count,
+        m.sell_count,
+        m.first_trade,
+        m.last_trade,
+        m.market_price,
+        s.total_supply,
+        GREATEST(m.tokens_bought - m.tokens_sold, 0)                  AS net_position,
+        m.usd_spent    / NULLIF(m.tokens_bought, 0)                   AS avg_buy_price,
+        m.usd_received / NULLIF(m.tokens_sold,   0)                   AS avg_sell_price,
+        m.usd_received
+          - (m.usd_spent / NULLIF(m.tokens_bought, 0))
+            * LEAST(m.tokens_sold, m.tokens_bought)                   AS realized_pnl_usd,
+        GREATEST(m.tokens_bought - m.tokens_sold, 0)
+          * (m.market_price
+             - COALESCE(m.usd_spent / NULLIF(m.tokens_bought, 0), 0)) AS unrealized_pnl_usd
+    FROM marked m
+    CROSS JOIN supply s
 )
 
 SELECT
-    ROW_NUMBER() OVER (ORDER BY realized_pnl_usd DESC)          AS rank,
+    ROW_NUMBER() OVER (ORDER BY realized_pnl_usd DESC)    AS rank,
     wallet,
     realized_pnl_usd,
     unrealized_pnl_usd,
-    realized_pnl_usd + unrealized_pnl_usd                       AS total_pnl_usd,
-    -- "avg profit multiple": what each dollar of cost basis came back as
-    avg_sell_price / NULLIF(avg_buy_price, 0)                   AS profit_multiple,
-    realized_pnl_usd / NULLIF(usd_spent, 0)                     AS realized_roi,
+    realized_pnl_usd + unrealized_pnl_usd                 AS total_pnl_usd,
+    avg_sell_price / NULLIF(avg_buy_price, 0)             AS profit_multiple,
+    realized_pnl_usd / NULLIF(usd_spent, 0)               AS realized_roi,
     avg_buy_price,
     avg_sell_price,
-    avg_buy_price  * (SELECT total_supply FROM supply)          AS avg_buy_mcap,
-    avg_sell_price * (SELECT total_supply FROM supply)          AS avg_sell_mcap,
-    (SELECT price FROM last_price) * (SELECT total_supply FROM supply) AS current_mcap,
-    (SELECT total_supply FROM supply)                                 AS circulating_supply,
+    avg_buy_price  * total_supply                         AS avg_buy_mcap,
+    avg_sell_price * total_supply                         AS avg_sell_mcap,
+    market_price   * total_supply                         AS current_mcap,
     usd_spent,
     usd_received,
     sol_spent,
     sol_received,
     tokens_bought,
     tokens_sold,
-    tokens_held,
-    tokens_held / NULLIF((SELECT total_supply FROM supply), 0) * 100 AS pct_supply_held,
+    net_position                                          AS tokens_held,
+    net_position * market_price                           AS value_usd,
+    net_position / NULLIF(total_supply, 0) * 100          AS pct_supply_held,
     CASE
         WHEN tokens_sold >= tokens_bought * 0.99 THEN 'closed'
         WHEN tokens_sold > 0                     THEN 'partial'
         ELSE 'holding'
-    END                                                          AS position_status,
+    END                                                   AS position_status,
+    -- A wallet that sold more than it bought inside the window was already
+    -- holding when the window opened, so its cost basis is incomplete and the
+    -- multiple can disagree with the PnL. Flag it rather than hide it.
+    CASE
+        WHEN tokens_sold > tokens_bought * 1.01 THEN 'partial'
+        ELSE 'full'
+    END                                                   AS cost_basis,
     buy_count,
     sell_count,
     first_trade,
     last_trade,
-    date_diff('hour', first_trade, last_trade)                   AS hold_hours
+    date_diff('hour', first_trade, last_trade)            AS hold_hours,
+    total_supply                                          AS circulating_supply
 FROM enriched
 ORDER BY realized_pnl_usd DESC
 LIMIT {{wallet_limit}}

@@ -68,6 +68,7 @@ const CSV_COLUMNS: Array<[keyof WalletRow, string]> = [
   ["pctSupplyHeld", "pct_supply_held"],
   ["valueUsd", "value_usd"],
   ["positionStatus", "position_status"],
+  ["costBasis", "cost_basis"],
   ["buyCount", "buy_count"],
   ["sellCount", "sell_count"],
   ["firstTrade", "first_trade"],
@@ -83,7 +84,7 @@ function csvCell(value: unknown): string {
 
 function labelFor(row: WalletRow, meta: ScanMeta): string {
   const tag = meta.tokenSymbol ?? meta.token.slice(0, 6);
-  return `alpha_${tag}_${String(row.rank).padStart(3, "0")}`;
+  return `bt_${tag}_${String(row.rank).padStart(3, "0")}`;
 }
 
 export function buildExport(
@@ -122,7 +123,7 @@ export function buildExport(
 export function exportFilename(format: ExportFormat, meta: ScanMeta): string {
   const spec = EXPORT_FORMATS.find((f) => f.id === format);
   const token = meta.token.slice(0, 10);
-  return `alpha-${meta.chain}-${meta.mode}-${token}.${spec?.extension ?? "txt"}`;
+  return `bagtrace-${meta.chain}-${meta.mode}-${token}.${spec?.extension ?? "txt"}`;
 }
 
 export function downloadFile(filename: string, content: string, mime: string): void {

@@ -104,6 +104,7 @@ export function normalizeRow(row: Record<string, unknown>, index: number): Walle
     pctSupplyHeld: num(row.pct_supply_held),
     valueUsd: num(row.value_usd),
     positionStatus: str(row.position_status),
+    costBasis: str(row.cost_basis),
 
     buyCount: num(row.buy_count),
     sellCount: num(row.sell_count),
@@ -118,11 +119,13 @@ export function summaryFromRows(rows: Record<string, unknown>[]): {
   circulatingSupply: number | null;
   currentMcap: number | null;
   tokenSymbol: string | null;
+  holderCount: number | null;
 } {
   const first = rows[0] ?? {};
   return {
     circulatingSupply: num(first.circulating_supply),
     currentMcap: num(first.current_mcap),
     tokenSymbol: str(first.token_symbol),
+    holderCount: num(first.holder_count),
   };
 }

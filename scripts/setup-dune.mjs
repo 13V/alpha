@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * Creates the four Alpha Wallets queries in your Dune account and prints the
- * env lines to paste into .env.local.
+ * Creates the four Bagtrace queries in your Dune account and prints the env
+ * lines to paste into .env.local. If the matching DUNE_QUERY_* id is already
+ * set, the existing query is updated in place instead of a duplicate created.
  *
- *   npm run setup:dune              # creates them private
- *   npm run setup:dune -- --public  # creates them public
+ *   npm run setup:dune              # create (or update) them, private
+ *   npm run setup:dune -- --public  # create them public
  *
  * Needs a Dune Analyst plan or higher (the query-management endpoints are gated).
  * If that call is rejected, the script tells you how to paste the SQL in by hand.
@@ -40,7 +41,7 @@ const chainParam = () => ({
 const QUERIES = [
   {
     env: "DUNE_QUERY_TRADERS_SOLANA",
-    name: "Alpha Wallets — Top traders (Solana)",
+    name: "Bagtrace — Top traders (Solana)",
     file: "top_traders_solana.sql",
     description: "Top wallets by realized PnL for a Solana SPL token.",
     parameters: [
@@ -52,7 +53,7 @@ const QUERIES = [
   },
   {
     env: "DUNE_QUERY_TRADERS_EVM",
-    name: "Alpha Wallets — Top traders (EVM)",
+    name: "Bagtrace — Top traders (EVM)",
     file: "top_traders_evm.sql",
     description: "Top wallets by realized PnL for an EVM token, on any dex.trades chain.",
     parameters: [
@@ -65,7 +66,7 @@ const QUERIES = [
   },
   {
     env: "DUNE_QUERY_HOLDERS_SOLANA",
-    name: "Alpha Wallets — Top holders (Solana)",
+    name: "Bagtrace — Top holders (Solana)",
     file: "top_holders_solana.sql",
     description: "Top holders of a Solana SPL token by current balance.",
     parameters: [
@@ -75,7 +76,7 @@ const QUERIES = [
   },
   {
     env: "DUNE_QUERY_HOLDERS_EVM",
-    name: "Alpha Wallets — Top holders (EVM)",
+    name: "Bagtrace — Top holders (EVM)",
     file: "top_holders_evm.sql",
     description: "Top holders of an EVM token by current balance.",
     parameters: [
@@ -90,20 +91,32 @@ const created = [];
 let failed = false;
 
 for (const query of QUERIES) {
-  process.stdout.write(`Creating "${query.name}" … `);
+  const existing = Number(process.env[query.env]);
+  const isUpdate = Number.isInteger(existing) && existing > 0;
+  const body = {
+    name: query.name,
+    description: query.description,
+    query_sql: sql(query.file),
+    parameters: query.parameters,
+  };
+
+  process.stdout.write(`${isUpdate ? "Updating" : "Creating"} "${query.name}" … `);
   try {
-    const { query_id } = await duneFetch("/query", apiKey, {
-      method: "POST",
-      body: JSON.stringify({
-        name: query.name,
-        description: query.description,
-        query_sql: sql(query.file),
-        is_private: !isPublic,
-        parameters: query.parameters,
-      }),
-    });
-    created.push([query.env, query_id]);
-    console.log(`ok → https://dune.com/queries/${query_id}`);
+    let queryId = existing;
+    if (isUpdate) {
+      await duneFetch(`/query/${existing}`, apiKey, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      });
+    } else {
+      const result = await duneFetch("/query", apiKey, {
+        method: "POST",
+        body: JSON.stringify({ ...body, is_private: !isPublic }),
+      });
+      queryId = result.query_id;
+    }
+    created.push([query.env, queryId]);
+    console.log(`ok → https://dune.com/queries/${queryId}`);
   } catch (error) {
     failed = true;
     console.log(`failed (${error.status ?? "?"}) ${error.message}`);

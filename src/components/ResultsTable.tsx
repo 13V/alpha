@@ -22,28 +22,43 @@ import type { Mode, WalletRow } from "@/lib/types";
 interface Column {
   key: string;
   header: string;
-  align?: "left";
+  title?: string;
   modes: Mode[];
   value: (row: WalletRow) => number | string | null;
   render: (row: WalletRow, chain: ChainId) => ReactNode;
 }
 
 function signed(value: number | null, text: string): ReactNode {
-  if (value == null) return <span className="muted">—</span>;
-  return <span className={value >= 0 ? "pos" : "neg"}>{text}</span>;
+  if (value == null) return <span className="dim">—</span>;
+  return <span className={value >= 0 ? "up" : "down"}>{text}</span>;
 }
 
 const COLUMNS: Column[] = [
   {
     key: "realizedPnlUsd",
-    header: "Realized PnL",
+    header: "Realized",
+    title: "Profit already taken, on weighted-average cost basis",
     modes: ["traders"],
     value: (r) => r.realizedPnlUsd,
-    render: (r) => signed(r.realizedPnlUsd, formatUsd(r.realizedPnlUsd)),
+    render: (r) => (
+      <>
+        {signed(r.realizedPnlUsd, formatUsd(r.realizedPnlUsd))}
+        {r.costBasis === "partial" && (
+          <span
+            className="dim"
+            title="Sold more than it bought in this window — it was already holding when the window opened, so the cost basis is incomplete. Widen the window for a true figure."
+          >
+            {" "}
+            ⚠
+          </span>
+        )}
+      </>
+    ),
   },
   {
     key: "unrealizedPnlUsd",
-    header: "Unrealized",
+    header: "Open",
+    title: "Paper profit on the bag still held",
     modes: ["traders"],
     value: (r) => r.unrealizedPnlUsd,
     render: (r) => signed(r.unrealizedPnlUsd, formatUsd(r.unrealizedPnlUsd)),
@@ -58,13 +73,14 @@ const COLUMNS: Column[] = [
   {
     key: "profitMultiple",
     header: "Multiple",
+    title: "Average sell price divided by average buy price",
     modes: ["traders"],
     value: (r) => r.profitMultiple,
     render: (r) =>
       r.profitMultiple == null ? (
-        <span className="muted">—</span>
+        <span className="dim">—</span>
       ) : (
-        <span className={r.profitMultiple >= 1 ? "pos" : "neg"}>
+        <span className={r.profitMultiple >= 1 ? "up" : "down"}>
           {formatMultiple(r.profitMultiple)}
         </span>
       ),
@@ -78,14 +94,16 @@ const COLUMNS: Column[] = [
   },
   {
     key: "avgBuyMcap",
-    header: "Avg buy MC",
+    header: "Entry MC",
+    title: "Market cap at this wallet's average buy price",
     modes: ["traders"],
     value: (r) => r.avgBuyMcap,
     render: (r) => formatMcap(r.avgBuyMcap),
   },
   {
     key: "avgSellMcap",
-    header: "Avg sell MC",
+    header: "Exit MC",
+    title: "Market cap at this wallet's average sell price",
     modes: ["traders"],
     value: (r) => r.avgSellMcap,
     render: (r) => formatMcap(r.avgSellMcap),
@@ -106,14 +124,14 @@ const COLUMNS: Column[] = [
   },
   {
     key: "usdSpent",
-    header: "Spent",
+    header: "Bought",
     modes: ["traders"],
     value: (r) => r.usdSpent,
     render: (r) => formatUsd(r.usdSpent),
   },
   {
     key: "usdReceived",
-    header: "Received",
+    header: "Sold",
     modes: ["traders"],
     value: (r) => r.usdReceived,
     render: (r) => formatUsd(r.usdReceived),
@@ -127,13 +145,14 @@ const COLUMNS: Column[] = [
   },
   {
     key: "tokensHeld",
-    header: "Still holding",
+    header: "Net bag",
+    title: "Tokens bought minus sold on DEXes over the window",
     modes: ["traders"],
     value: (r) => r.tokensHeld,
     render: (r) => formatTokens(r.tokensHeld),
   },
   {
-    key: "tokensHeld",
+    key: "tokensHeldNow",
     header: "Balance",
     modes: ["holders"],
     value: (r) => r.tokensHeld,
@@ -142,7 +161,7 @@ const COLUMNS: Column[] = [
   {
     key: "valueUsd",
     header: "Value",
-    modes: ["holders"],
+    modes: ["traders", "holders"],
     value: (r) => r.valueUsd,
     render: (r) => formatUsd(r.valueUsd),
   },
@@ -155,49 +174,51 @@ const COLUMNS: Column[] = [
   },
   {
     key: "solBalance",
-    header: "SOL bal",
+    header: "SOL",
+    title: "The wallet's own SOL balance — an empty wallet is usually a burner",
     modes: ["holders"],
     value: (r) => r.solBalance,
-    render: (r) => (r.solBalance == null ? <span className="muted">—</span> : r.solBalance.toFixed(2)),
+    render: (r) => (r.solBalance == null ? <span className="dim">—</span> : r.solBalance.toFixed(2)),
   },
   {
     key: "positionStatus",
-    header: "Status",
+    header: "Position",
     modes: ["traders"],
     value: (r) => r.positionStatus,
     render: (r) =>
       r.positionStatus ? (
-        <span className="badge" data-status={r.positionStatus}>
+        <span className="tag" data-status={r.positionStatus}>
           {r.positionStatus}
         </span>
       ) : (
-        <span className="muted">—</span>
+        <span className="dim">—</span>
       ),
   },
   {
     key: "trades",
     header: "B / S",
+    title: "Buy and sell fill counts",
     modes: ["traders"],
     value: (r) => (r.buyCount ?? 0) + (r.sellCount ?? 0),
     render: (r) => (
-      <span className="muted">
+      <span className="dim">
         {formatCount(r.buyCount)} / {formatCount(r.sellCount)}
       </span>
     ),
   },
   {
     key: "holdHours",
-    header: "Held for",
+    header: "Held",
     modes: ["traders"],
     value: (r) => r.holdHours,
-    render: (r) => <span className="muted">{formatDuration(r.holdHours)}</span>,
+    render: (r) => <span className="dim">{formatDuration(r.holdHours)}</span>,
   },
   {
     key: "lastTrade",
     header: "Last seen",
     modes: ["traders", "holders"],
     value: (r) => r.lastTrade ?? r.firstTrade,
-    render: (r) => <span className="muted">{formatWhen(r.lastTrade)}</span>,
+    render: (r) => <span className="dim">{formatWhen(r.lastTrade)}</span>,
   },
 ];
 
@@ -210,7 +231,7 @@ interface Props {
   onToggleAll: (wallets: string[], select: boolean) => void;
 }
 
-export default function WalletTable({
+export default function ResultsTable({
   rows,
   chain,
   mode,
@@ -218,14 +239,17 @@ export default function WalletTable({
   onToggle,
   onToggleAll,
 }: Props) {
-  const [sortKey, setSortKey] = useState<string>("rank");
+  const [sortKey, setSortKey] = useState("rank");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [copied, setCopied] = useState<string | null>(null);
 
-  const columns = useMemo(() => {
-    const active = COLUMNS.filter((c) => c.modes.includes(mode));
-    // hide columns that are entirely empty for this result set
-    return active.filter((c) => rows.some((r) => c.value(r) != null));
-  }, [mode, rows]);
+  const columns = useMemo(
+    () =>
+      COLUMNS.filter((c) => c.modes.includes(mode)).filter((c) =>
+        rows.some((r) => c.value(r) != null),
+      ),
+    [mode, rows],
+  );
 
   const sorted = useMemo(() => {
     const column = COLUMNS.find((c) => c.key === sortKey);
@@ -247,11 +271,20 @@ export default function WalletTable({
   }, [rows, sortKey, sortDir]);
 
   function sortBy(key: string) {
-    if (key === sortKey) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
+    if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
       setSortKey(key);
       setSortDir(key === "rank" ? "asc" : "desc");
+    }
+  }
+
+  async function copyAddress(wallet: string) {
+    try {
+      await navigator.clipboard.writeText(wallet);
+      setCopied(wallet);
+      setTimeout(() => setCopied(null), 1200);
+    } catch {
+      /* clipboard unavailable — the address is still visible and linked */
     }
   }
 
@@ -269,15 +302,10 @@ export default function WalletTable({
                 type="checkbox"
                 checked={allSelected}
                 onChange={() => onToggleAll(allWallets, !allSelected)}
-                aria-label="Select all wallets"
+                aria-label="Select all"
               />
             </th>
-            <th
-              className="sortable"
-              data-align="left"
-              onClick={() => sortBy("rank")}
-              title="Sort by rank"
-            >
+            <th className="sortable" data-align="left" onClick={() => sortBy("rank")}>
               #{arrow("rank")}
             </th>
             <th data-align="left">Wallet</th>
@@ -285,9 +313,8 @@ export default function WalletTable({
               <th
                 key={c.key}
                 className="sortable"
-                data-align={c.align}
+                title={c.title}
                 onClick={() => sortBy(c.key)}
-                title={`Sort by ${c.header}`}
               >
                 {c.header}
                 {arrow(c.key)}
@@ -308,24 +335,33 @@ export default function WalletTable({
                     aria-label={`Select ${row.wallet}`}
                   />
                 </td>
-                <td className="rank-cell" data-align="left">
-                  {row.rank}
+                <td data-align="left">
+                  <span className="rank-pill" data-top={row.rank <= 3}>
+                    {row.rank}
+                  </span>
                 </td>
                 <td data-align="left">
-                  <a
-                    className="wallet-link"
-                    href={CHAINS[chain].explorer(row.wallet)}
-                    target="_blank"
-                    rel="noreferrer"
-                    title={row.wallet}
-                  >
-                    {shortAddress(row.wallet, 6, 6)}
-                  </a>
+                  <span className="addr">
+                    <a
+                      href={CHAINS[chain].explorer(row.wallet)}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={row.wallet}
+                    >
+                      {shortAddress(row.wallet, 6, 6)}
+                    </a>
+                    <button
+                      className="copy"
+                      onClick={() => copyAddress(row.wallet)}
+                      title="Copy address"
+                      aria-label="Copy address"
+                    >
+                      {copied === row.wallet ? "✓" : "⧉"}
+                    </button>
+                  </span>
                 </td>
                 {columns.map((c) => (
-                  <td key={c.key} data-align={c.align}>
-                    {c.render(row, chain)}
-                  </td>
+                  <td key={c.key}>{c.render(row, chain)}</td>
                 ))}
               </tr>
             );

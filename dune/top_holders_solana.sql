@@ -1,16 +1,18 @@
 -- ============================================================================
--- Alpha Wallets — Top holders of a Solana SPL token, ranked by current balance.
+-- Bagtrace — Top holders of a Solana SPL token, ranked by current balance.
 -- ============================================================================
--- Cheap mode: touches only the balances table, so it costs a fraction of the
--- PnL query and returns in seconds. Use top_traders_solana.sql when you want
--- profit ranking instead of bag size.
+-- Source: solana_utils.latest_balances (the canonical per-account snapshot).
 --
 -- Parameters:
 --   token_address  text    SPL mint address
---   wallet_limit   number  how many holders to return (100 / 250 / 500)
+--   wallet_limit   number  how many holders to return
 --
--- Balances are rolled up per OWNER, not per token account — one owner can hold
--- the same mint across several associated token accounts.
+-- Balances are rolled up per OWNER — one owner can hold the same mint across
+-- several associated token accounts.
+--
+-- Perf note: the table is filtered on token_mint_address, which the Dune docs
+-- name as the indexed access path. Circulating supply comes from a window over
+-- the same scan rather than a second aggregate, so the table is read once.
 -- ============================================================================
 
 WITH
@@ -27,19 +29,29 @@ balances AS (
     GROUP BY 1
 ),
 
-supply AS (
-    SELECT SUM(balance) AS total_supply FROM balances
+ranked AS (
+    SELECT
+        wallet,
+        balance,
+        sol_balance,
+        last_activity,
+        token_accounts,
+        SUM(balance) OVER ()                      AS circulating_supply,
+        COUNT(*)     OVER ()                      AS holder_count,
+        ROW_NUMBER() OVER (ORDER BY balance DESC) AS rank
+    FROM balances
 )
 
 SELECT
-    ROW_NUMBER() OVER (ORDER BY balance DESC)                      AS rank,
+    rank,
     wallet,
-    balance                                                        AS tokens_held,
-    balance / NULLIF((SELECT total_supply FROM supply), 0) * 100   AS pct_supply_held,
+    balance                                             AS tokens_held,
+    balance / NULLIF(circulating_supply, 0) * 100       AS pct_supply_held,
     sol_balance,
     token_accounts,
     last_activity,
-    (SELECT total_supply FROM supply)                              AS circulating_supply
-FROM balances
-ORDER BY balance DESC
-LIMIT {{wallet_limit}}
+    circulating_supply,
+    holder_count
+FROM ranked
+WHERE rank <= {{wallet_limit}}
+ORDER BY rank

@@ -112,7 +112,7 @@ async function scan(input: ScanRequest) {
   }
 
   const client = new DuneClient(apiKey);
-  const performance = (process.env.DUNE_PERFORMANCE ?? "medium") as
+  const performance = (process.env.DUNE_PERFORMANCE ?? "large") as
     | "small"
     | "medium"
     | "large";
@@ -136,6 +136,7 @@ async function scan(input: ScanRequest) {
         lookbackDays: mode === "traders" ? lookbackDays : null,
         minUsd: mode === "traders" ? minUsd : null,
         rowCount: rawRows.length,
+        holderCount: summary.holderCount,
         circulatingSupply: summary.circulatingSupply,
         currentMcap: summary.currentMcap,
         tokenSymbol: summary.tokenSymbol,

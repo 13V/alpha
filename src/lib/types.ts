@@ -34,6 +34,7 @@ export interface WalletRow {
   pctSupplyHeld: number | null;
   valueUsd: number | null;
   positionStatus: string | null;
+  costBasis: string | null;
 
   // Activity
   buyCount: number | null;
@@ -52,6 +53,7 @@ export interface ScanMeta {
   lookbackDays: number | null;
   minUsd: number | null;
   rowCount: number;
+  holderCount: number | null;
   circulatingSupply: number | null;
   currentMcap: number | null;
   tokenSymbol: string | null;
