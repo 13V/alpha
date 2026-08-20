@@ -100,9 +100,11 @@ downloadable `highpnl-<ticker>.json`.
 Weighted-average cost basis over the chosen window:
 
 ```
-avg_buy_price   = USD spent buying / tokens bought
-avg_sell_price  = USD received     / tokens sold
-realized_pnl    = (avg_sell_price - avg_buy_price) × min(tokens_sold, tokens_bought)
+acquired_tokens = tokens bought on a DEX + tokens received by transfer
+acquired_cost   = USD spent buying + value of those transfers when they landed
+avg_buy_price   = acquired_cost / acquired_tokens
+avg_sell_price  = USD received / tokens sold
+realized_pnl    = USD received - avg_buy_price × min(tokens_sold, acquired_tokens)
 profit_multiple = avg_sell_price / avg_buy_price
 ```
 
