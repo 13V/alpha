@@ -119,7 +119,21 @@ Entry and exit market caps are those average prices × circulating supply.
   usually a router.
 - **On Solana the wallet is `trader_id`.**
 - **`amount_usd` is null on very thin pairs**, so those fills contribute nothing to the USD
-  columns.
+  columns. The `min_usd` floor is skipped entirely when a pair has no USD pricing at all,
+  so an unpriced token returns its wallets rather than silently returning nothing.
+
+### Brand-new tokens will not be there yet
+
+Dune's Solana pipeline runs **several hours behind the chain**. Measured on 2026-08-20,
+`dex_solana.trades` and `tokens_solana.transfers` were both 336 minutes (5.6 hours) behind,
+and `solana_utils.latest_balances` 272 minutes behind.
+
+A token that launched today therefore returns nothing — no trades, no transfers, not even
+metadata in `tokens_solana.fungible`. This is the single most likely reason a contract comes
+back empty, and it resolves on its own once Dune catches up.
+
+It is not a coverage gap: `dex_solana.trades` decodes `pumpdotfun`, `pumpswap`, `raydium`,
+`meteora` and `jupiterz`, so pump.fun bonding-curve swaps are included once indexed.
 
 ---
 

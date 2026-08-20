@@ -99,7 +99,12 @@ per_wallet AS (
         MAX(block_time)                FILTER (WHERE fill_price IS NOT NULL) AS wallet_priced_at
     FROM fills
     GROUP BY 1
+    -- Apply the USD floor only where the pair actually has USD pricing. On a
+    -- brand-new or very thin pair amount_usd is null on every fill, and a naive
+    -- floor would drop every wallet and report "no results" for a token that
+    -- did in fact trade.
     HAVING SUM(usd_amount) >= {{min_usd}}
+        OR SUM(usd_amount) = 0
 ),
 
 marked AS (

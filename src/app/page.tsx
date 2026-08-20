@@ -293,10 +293,23 @@ export default function Home() {
 
       {!loading && data && data.rows.length === 0 && (
         <div className="hint">
-          No wallet traded this contract for more than $50 in the last {data.meta.lookbackDays}{" "}
-          days.
+          <b>Dune has no trades indexed for this contract</b> in the last{" "}
+          {data.meta.lookbackDays} days.
           <br />
-          Try a longer window.
+          {data.meta.chain === "solana" ? (
+            <>
+              Dune&rsquo;s Solana pipeline runs several hours behind the chain, so a token
+              that launched today will not appear until it catches up. If this is a fresh
+              launch, check back in a few hours.
+            </>
+          ) : (
+            <>
+              It may not have traded on a DEX that Dune decodes, or the trades may be older
+              than the window.
+            </>
+          )}
+          <br />
+          Otherwise, try a longer window.
         </div>
       )}
 
