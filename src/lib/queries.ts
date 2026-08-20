@@ -13,6 +13,17 @@ const ENV_VARS: Record<Mode, Record<"svm" | "evm", string>> = {
   holders: { svm: "DUNE_QUERY_HOLDERS_SOLANA", evm: "DUNE_QUERY_HOLDERS_EVM" },
 };
 
+/**
+ * These queries are public on Dune, so any API key can execute them — that is
+ * what lets a visitor paste their own key and get results without creating
+ * anything in their own account. Override via the DUNE_QUERY_* env vars to
+ * point at your own copies (`npm run setup:dune` creates and prints them).
+ */
+const DEFAULT_QUERY_IDS: Record<Mode, Record<"svm" | "evm", number>> = {
+  traders: { svm: 8385958, evm: 8385959 },
+  holders: { svm: 8385960, evm: 8385961 },
+};
+
 export class ConfigError extends Error {
   readonly hint: string;
   constructor(message: string, hint: string) {
@@ -34,16 +45,12 @@ export function planQuery(args: {
   const envVar = ENV_VARS[args.mode][chain.kind];
   const raw = process.env[envVar];
 
-  if (!raw) {
-    throw new ConfigError(
-      `${envVar} is not set`,
-      "Run `npm run setup:dune` to create the queries in your Dune account, then paste the printed ids into .env.local.",
-    );
-  }
-
-  const queryId = Number(raw);
+  const queryId = raw ? Number(raw) : DEFAULT_QUERY_IDS[args.mode][chain.kind];
   if (!Number.isInteger(queryId) || queryId <= 0) {
-    throw new ConfigError(`${envVar} is not a valid query id: ${raw}`, "It should be the number from the query's dune.com URL.");
+    throw new ConfigError(
+      `${envVar} is not a valid query id: ${raw}`,
+      "It should be the number from the query's dune.com URL.",
+    );
   }
 
   const parameters: QueryParameters = {

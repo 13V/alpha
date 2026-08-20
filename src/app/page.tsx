@@ -2,29 +2,28 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import ControlRail, { type ChainChoice } from "@/components/ControlRail";
 import ExportToolbar from "@/components/ExportToolbar";
 import ResultsTable from "@/components/ResultsTable";
-import { CHAINS } from "@/lib/chains";
-import { formatCount, formatMcap, formatTokens, shortAddress } from "@/lib/format";
-import type { Mode, ScanResponse } from "@/lib/types";
+import { CHAINS, detectChain, isEvmAddress, type ChainId } from "@/lib/chains";
+import { formatMcap } from "@/lib/format";
+import type { ScanResponse } from "@/lib/types";
+
+const EVM_CHOICES: ChainId[] = ["base", "bnb", "ethereum"];
+const WINDOWS = [7, 30, 90];
+const KEY_STORE = "bagtrace-dune-key";
 
 interface Failure {
   error: string;
   hint?: string;
 }
 
-type Theme = "dark" | "light";
-
 export default function Home() {
   const [token, setToken] = useState("");
-  const [chain, setChain] = useState<ChainChoice>("auto");
-  const [mode, setMode] = useState<Mode>("traders");
-  const [limit, setLimit] = useState(100);
-  const [lookbackDays, setLookbackDays] = useState(90);
-  const [minUsd, setMinUsd] = useState(50);
-  const [moreChains, setMoreChains] = useState(false);
-  const [theme, setTheme] = useState<Theme>("dark");
+  const [apiKey, setApiKey] = useState("");
+  const [keySaved, setKeySaved] = useState(false);
+  const [editingKey, setEditingKey] = useState(false);
+  const [evmChain, setEvmChain] = useState<ChainId>("base");
+  const [days, setDays] = useState(90);
 
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -33,10 +32,10 @@ export default function Home() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    const stored = window.localStorage.getItem("bagtrace-theme") as Theme | null;
-    if (stored === "light" || stored === "dark") {
-      setTheme(stored);
-      document.documentElement.dataset.theme = stored;
+    const stored = window.localStorage.getItem(KEY_STORE);
+    if (stored) {
+      setApiKey(stored);
+      setKeySaved(true);
     }
   }, []);
 
@@ -48,28 +47,38 @@ export default function Home() {
     return () => clearInterval(id);
   }, [loading]);
 
-  function toggleTheme() {
-    const next: Theme = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    document.documentElement.dataset.theme = next;
-    window.localStorage.setItem("bagtrace-theme", next);
-  }
+  // Only EVM addresses are ambiguous — a Solana mint identifies its chain by itself.
+  const needsChain = isEvmAddress(token);
+  const detected = detectChain(token);
 
   async function run() {
+    const key = apiKey.trim();
+    if (!key) {
+      setFailure({
+        error: "Add your Dune API key first",
+        hint: "It is free at dune.com/settings/api and stays in this browser.",
+      });
+      return;
+    }
+
     setLoading(true);
     setFailure(null);
     setSelected(new Set());
+    window.localStorage.setItem(KEY_STORE, key);
+    setKeySaved(true);
+    setEditingKey(false);
+
     try {
       const res = await fetch("/api/wallets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          apiKey: key,
           token: token.trim(),
-          chain: chain === "auto" ? undefined : chain,
-          mode,
-          limit,
-          lookbackDays,
-          minUsd,
+          chain: needsChain ? evmChain : undefined,
+          mode: "traders",
+          limit: 100,
+          lookbackDays: days,
         }),
       });
       const body = await res.json();
@@ -81,10 +90,7 @@ export default function Home() {
       setData(body as ScanResponse);
     } catch (error) {
       setData(null);
-      setFailure({
-        error: error instanceof Error ? error.message : "Request failed",
-        hint: "The dev server may have stopped.",
-      });
+      setFailure({ error: error instanceof Error ? error.message : "Request failed" });
     } finally {
       setLoading(false);
     }
@@ -104,157 +110,192 @@ export default function Home() {
     return selected.size > 0 ? data.rows.filter((r) => selected.has(r.wallet)) : data.rows;
   }, [data, selected]);
 
+  const showKeyInput = !keySaved || editingKey;
+
   return (
-    <div className="frame">
-      <ControlRail
-        token={token}
-        chain={chain}
-        mode={mode}
-        limit={limit}
-        lookbackDays={lookbackDays}
-        minUsd={minUsd}
-        loading={loading}
-        moreChains={moreChains}
-        theme={theme}
-        onTokenChange={setToken}
-        onChainChange={setChain}
-        onModeChange={setMode}
-        onLimitChange={setLimit}
-        onLookbackChange={setLookbackDays}
-        onMinUsdChange={setMinUsd}
-        onToggleMoreChains={() => setMoreChains((v) => !v)}
-        onToggleTheme={toggleTheme}
-        onRun={run}
-      />
+    <main className="page">
+      <header className="head">
+        <h1 className="logo">
+          bag<b>trace</b>
+        </h1>
+        <p className="sub">
+          Paste a contract. Get the 100 wallets that made the most money on it.
+        </p>
+      </header>
 
-      <main className="main">
-        {failure && (
-          <div className="notice" data-kind="error">
-            <strong>{failure.error}</strong>
-            {failure.hint && <span>{failure.hint}</span>}
-          </div>
-        )}
-
-        {loading && (
-          <div className="progress">
-            <div className="progress-title">Running the query on Dune</div>
-            <div className="progress-sub">
-              {mode === "traders"
-                ? `scanning ${lookbackDays}d of DEX fills · ${elapsed}s`
-                : `reading balances · ${elapsed}s`}
-            </div>
-            <div className="progress-bar">
-              <i />
-            </div>
-          </div>
-        )}
-
-        {!loading && data && (
-          <>
-            <dl className="summary">
-              <div>
-                <dt>Token</dt>
-                <dd>
-                  {data.meta.tokenSymbol ?? shortAddress(data.meta.token, 6, 4)}
-                </dd>
-              </div>
-              <div>
-                <dt>Chain</dt>
-                <dd>
-                  <span
-                    className="chain-dot"
-                    style={{ background: CHAINS[data.meta.chain].accent }}
-                  />
-                  {CHAINS[data.meta.chain].label}
-                </dd>
-              </div>
-              <div>
-                <dt>Ranked by</dt>
-                <dd>{data.meta.mode === "traders" ? "Realized PnL" : "Bag size"}</dd>
-              </div>
-              <div>
-                <dt>Rows</dt>
-                <dd>{data.meta.rowCount}</dd>
-              </div>
-              {data.meta.currentMcap != null && (
-                <div>
-                  <dt>Market cap</dt>
-                  <dd>{formatMcap(data.meta.currentMcap)}</dd>
-                </div>
-              )}
-              {data.meta.circulatingSupply != null && (
-                <div>
-                  <dt>Supply</dt>
-                  <dd>{formatTokens(data.meta.circulatingSupply)}</dd>
-                </div>
-              )}
-              {data.meta.holderCount != null && (
-                <div>
-                  <dt>Holders</dt>
-                  <dd>{formatCount(data.meta.holderCount)}</dd>
-                </div>
-              )}
-              {data.meta.lookbackDays != null && (
-                <div>
-                  <dt>Window</dt>
-                  <dd>{data.meta.lookbackDays}d</dd>
-                </div>
-              )}
-              <div>
-                <dt>Ran in</dt>
-                <dd className="dim">
-                  {data.meta.cached
-                    ? "cached"
-                    : data.meta.executionMillis != null
-                      ? `${(data.meta.executionMillis / 1000).toFixed(1)}s`
-                      : "—"}
-                </dd>
-              </div>
-            </dl>
-
-            {data.rows.length > 0 ? (
+      <div className="box">
+        <div className="search">
+          <input
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="Contract address — Solana mint or 0x…"
+            spellCheck={false}
+            autoComplete="off"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !loading) run();
+            }}
+          />
+          <button className="go" onClick={run} disabled={loading || !token.trim()}>
+            {loading ? (
               <>
-                <ExportToolbar
-                  rows={exportRows}
-                  meta={data.meta}
-                  selectedCount={selected.size}
-                  onClearSelection={() => setSelected(new Set())}
-                />
-                <ResultsTable
-                  rows={data.rows}
-                  chain={data.meta.chain}
-                  mode={data.meta.mode}
-                  selected={selected}
-                  onToggle={toggle}
-                  onToggleAll={(wallets, select) =>
-                    setSelected(select ? new Set(wallets) : new Set())
-                  }
-                />
+                <span className="spin" />
+                Tracing
               </>
             ) : (
-              <div className="placeholder">
-                <h2>Nothing came back</h2>
-                {data.meta.mode === "traders"
-                  ? "No wallet cleared the minimum volume in this window. Try a longer window or lower the floor."
-                  : "Dune has no balances indexed for this contract yet."}
-              </div>
+              "Top 100"
             )}
-          </>
-        )}
+          </button>
+        </div>
 
-        {!loading && !data && !failure && (
-          <div className="placeholder">
-            <h2>Paste a contract address</h2>
-            <b>Profit</b> ranks wallets by realized PnL from DEX fills and shows the market
-            cap each one entered and exited at.
-            <br />
-            <b>Bag size</b> just ranks current holders — cheaper and faster.
-            <br />
-            <br />
-            Solana mints and <code>0x…</code> contracts are detected automatically.
+        <div className="under">
+          {showKeyInput ? (
+            <>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="Dune API key"
+                spellCheck={false}
+                autoComplete="off"
+                aria-label="Dune API key"
+              />
+              <a href="https://dune.com/settings/api" target="_blank" rel="noreferrer">
+                get one free →
+              </a>
+            </>
+          ) : (
+            <>
+              <span className="keyok">✓ key saved in this browser</span>
+              <button className="mini" onClick={() => setEditingKey(true)}>
+                change
+              </button>
+            </>
+          )}
+
+          {needsChain && (
+            <>
+              <span>chain</span>
+              {EVM_CHOICES.map((id) => (
+                <button
+                  key={id}
+                  className="mini"
+                  data-active={evmChain === id}
+                  onClick={() => setEvmChain(id)}
+                >
+                  {CHAINS[id].label}
+                </button>
+              ))}
+            </>
+          )}
+
+          <span>window</span>
+          {WINDOWS.map((n) => (
+            <button
+              key={n}
+              className="mini"
+              data-active={days === n}
+              onClick={() => setDays(n)}
+              title="How far back to scan trades. Shorter costs fewer Dune credits."
+            >
+              {n}d
+            </button>
+          ))}
+
+          {detected === "solana" && <span className="dim">· solana</span>}
+        </div>
+      </div>
+
+      {failure && (
+        <div className="msg" data-kind="error">
+          <strong>{failure.error}</strong>
+          {failure.hint && <span>{failure.hint}</span>}
+        </div>
+      )}
+
+      {loading && (
+        <div className="working">
+          Running your query on Dune…
+          <div className="bar">
+            <i />
           </div>
-        )}
-      </main>
-    </div>
+          <div style={{ marginTop: "0.7rem", fontSize: "0.78rem" }}>
+            {elapsed}s · Solana can take a few minutes on a token nobody has queried before
+          </div>
+        </div>
+      )}
+
+      {!loading && data && data.rows.length > 0 && (
+        <div className="results">
+          <div className="recap">
+            <b>{data.meta.tokenSymbol ?? "Unknown token"}</b>
+            <span className="sep">·</span>
+            {CHAINS[data.meta.chain].label}
+            {data.meta.currentMcap != null && (
+              <>
+                <span className="sep">·</span>
+                {formatMcap(data.meta.currentMcap)} mcap
+              </>
+            )}
+            <span className="sep">·</span>
+            {data.meta.rowCount} wallets
+            <span className="sep">·</span>
+            {data.meta.lookbackDays}d
+            <span className="sep">·</span>
+            <span className="dim">
+              {data.meta.cached
+                ? "cached"
+                : data.meta.executionMillis != null
+                  ? `${(data.meta.executionMillis / 1000).toFixed(1)}s`
+                  : ""}
+            </span>
+          </div>
+
+          <ExportToolbar
+            rows={exportRows}
+            meta={data.meta}
+            selectedCount={selected.size}
+            onClearSelection={() => setSelected(new Set())}
+          />
+          <ResultsTable
+            rows={data.rows}
+            chain={data.meta.chain}
+            selected={selected}
+            onToggle={toggle}
+            onToggleAll={(wallets, select) =>
+              setSelected(select ? new Set(wallets) : new Set())
+            }
+          />
+        </div>
+      )}
+
+      {!loading && data && data.rows.length === 0 && (
+        <div className="hint">
+          No wallet traded this contract for more than $50 in the last {data.meta.lookbackDays}{" "}
+          days.
+          <br />
+          Try a longer window.
+        </div>
+      )}
+
+      {!loading && !data && !failure && (
+        <div className="hint">
+          Ranked by realized profit from DEX fills, with the market cap each wallet entered
+          and exited at.
+          <br />
+          Pick the ones you want and copy them straight into Axiom.
+        </div>
+      )}
+
+      <footer className="foot">
+        Runs on your own{" "}
+        <a href="https://dune.com/settings/api" target="_blank" rel="noreferrer">
+          Dune
+        </a>{" "}
+        key — it stays in your browser and is only passed through to Dune.
+        <br />
+        PnL counts DEX fills only; a ⚠ means the wallet was already holding when the window
+        opened.
+      </footer>
+    </main>
   );
 }

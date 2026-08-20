@@ -26,6 +26,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 interface ScanRequest {
+  apiKey?: unknown;
   token?: unknown;
   chain?: unknown;
   mode?: unknown;
@@ -84,6 +85,8 @@ async function scan(input: ScanRequest) {
   );
   const minUsd = Math.max(0, Number(input.minUsd ?? envInt("DEFAULT_MIN_USD", 50)));
 
+  // Keyed on the query parameters only — never the API key, which must not
+  // influence or leak across cached results.
   const key = cacheKey([chain, mode, token, limit, lookbackDays, minUsd]);
   const ttl = envInt("CACHE_TTL_SECONDS", 1800);
 
@@ -94,12 +97,15 @@ async function scan(input: ScanRequest) {
     }
   }
 
-  const apiKey = process.env.DUNE_API_KEY;
+  // The visitor's own key wins; a server key is only a fallback for self-hosting.
+  // It is used for this request and never logged or persisted.
+  const suppliedKey = typeof input.apiKey === "string" ? input.apiKey.trim() : "";
+  const apiKey = suppliedKey || process.env.DUNE_API_KEY || "";
   if (!apiKey) {
     return fail(
-      500,
-      "DUNE_API_KEY is not set",
-      "Add your Dune Data API key to .env.local — https://dune.com/settings/api",
+      401,
+      "No Dune API key",
+      "Paste a Dune API key to run a trace — get one free at dune.com/settings/api",
     );
   }
 
@@ -171,6 +177,7 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   return scan({
+    apiKey: request.headers.get("x-dune-api-key") ?? undefined,
     token: params.get("token") ?? params.get("ca") ?? undefined,
     chain: params.get("chain") ?? undefined,
     mode: params.get("mode") ?? undefined,

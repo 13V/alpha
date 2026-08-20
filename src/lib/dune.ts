@@ -67,11 +67,11 @@ const FINISHED: ExecutionState[] = [
 
 function hintFor(status: number): string | undefined {
   if (status === 401 || status === 403)
-    return "Check DUNE_API_KEY — it needs at least Read scope (https://dune.com/settings/api).";
+    return "Dune rejected that key. Copy it again from dune.com/settings/api — it needs Read scope.";
   if (status === 402)
-    return "Your Dune account is out of credits for this billing period.";
+    return "That Dune account is out of credits for this billing period.";
   if (status === 404)
-    return "Query not found. Re-check the DUNE_QUERY_* ids, and make sure the key owns those queries.";
+    return "Query not found. It may have been made private; set DUNE_QUERY_* to your own copies.";
   if (status === 429) return "Rate limited by Dune — back off and retry.";
   return undefined;
 }

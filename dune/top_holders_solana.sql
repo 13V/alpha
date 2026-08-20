@@ -20,6 +20,16 @@
 -- ============================================================================
 
 WITH
+-- Token name/symbol. address_prefix is the lowercased first character of the
+-- mint and is the table's partition key, so this lookup is nearly free.
+token_meta AS (
+    SELECT symbol, name
+    FROM tokens_solana.fungible
+    WHERE token_mint_address = '{{token_address}}'
+      AND address_prefix = lower(substr('{{token_address}}', 1, 1))
+    LIMIT 1
+),
+
 balances AS (
     SELECT
         token_balance_owner AS wallet,
@@ -45,14 +55,17 @@ ranked AS (
 )
 
 SELECT
-    rank,
-    wallet,
-    balance                                             AS tokens_held,
-    balance / NULLIF(circulating_supply, 0) * 100       AS pct_supply_held,
-    token_accounts,
-    last_activity,
-    circulating_supply,
-    holder_count
-FROM ranked
-WHERE rank <= {{wallet_limit}}
-ORDER BY rank
+    r.rank,
+    r.wallet,
+    r.balance                                             AS tokens_held,
+    r.balance / NULLIF(r.circulating_supply, 0) * 100     AS pct_supply_held,
+    r.token_accounts,
+    r.last_activity,
+    r.circulating_supply,
+    r.holder_count,
+    tm.symbol                                             AS token_symbol,
+    tm.name                                               AS token_name
+FROM ranked r
+LEFT JOIN token_meta tm ON true
+WHERE r.rank <= {{wallet_limit}}
+ORDER BY r.rank

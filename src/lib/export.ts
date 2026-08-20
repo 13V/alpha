@@ -1,6 +1,36 @@
+import { formatMultiple, shortAddress } from "./format";
 import type { ScanMeta, WalletRow } from "./types";
 
-export type ExportFormat = "addresses" | "comma" | "csv" | "json" | "watchlist";
+export type ExportFormat =
+  | "axiom"
+  | "addresses"
+  | "comma"
+  | "csv"
+  | "json"
+  | "watchlist";
+
+/** How each tracked wallet gets labelled in the Axiom payload. */
+export type NameBy = "multiple" | "pnl" | "rank" | "address";
+
+export interface AxiomOptions {
+  nameBy: NameBy;
+  group: string;
+  emoji: string;
+  alertsOnToast: boolean;
+  alertsOnBubble: boolean;
+  alertsOnFeed: boolean;
+  sound: string;
+}
+
+export const AXIOM_DEFAULTS: AxiomOptions = {
+  nameBy: "multiple",
+  group: "Main",
+  emoji: "🎯",
+  alertsOnToast: false,
+  alertsOnBubble: true,
+  alertsOnFeed: true,
+  sound: "default",
+};
 
 export const EXPORT_FORMATS: Array<{
   id: ExportFormat;
@@ -9,6 +39,13 @@ export const EXPORT_FORMATS: Array<{
   extension: string;
   mime: string;
 }> = [
+  {
+    id: "axiom",
+    label: "Axiom",
+    description: "Tracked-wallet JSON — paste straight into Axiom's import",
+    extension: "json",
+    mime: "application/json",
+  },
   {
     id: "addresses",
     label: "Address list",
@@ -87,12 +124,76 @@ function labelFor(row: WalletRow, meta: ScanMeta): string {
   return `bt_${tag}_${String(row.rank).padStart(3, "0")}`;
 }
 
+/** Ticker used in wallet names — "14.10x - KIMCHI". */
+export function tokenTag(meta: ScanMeta): string {
+  return (meta.tokenSymbol ?? meta.token.slice(0, 6)).toUpperCase();
+}
+
+/** $1,283,400 -> "$1.28M", 892300 -> "$892.3K" — trailing zeros trimmed. */
+function compactUsd(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "$0";
+  const sign = value < 0 ? "-" : "";
+  const abs = Math.abs(value);
+  const [scaled, suffix] =
+    abs >= 1e9 ? [abs / 1e9, "B"]
+    : abs >= 1e6 ? [abs / 1e6, "M"]
+    : abs >= 1e3 ? [abs / 1e3, "K"]
+    : [abs, ""];
+  const text = scaled.toFixed(2).replace(/\.?0+$/, "");
+  return `${sign}$${text}${suffix}`;
+}
+
+export function axiomName(row: WalletRow, meta: ScanMeta, nameBy: NameBy): string {
+  const tag = tokenTag(meta);
+  switch (nameBy) {
+    case "multiple":
+      // holders mode has no multiple; fall back rather than emit "— - TAG"
+      return row.profitMultiple != null
+        ? `${formatMultiple(row.profitMultiple)} - ${tag}`
+        : `#${row.rank} - ${tag}`;
+    case "pnl":
+      return row.realizedPnlUsd != null
+        ? `${compactUsd(row.realizedPnlUsd)} - ${tag}`
+        : `#${row.rank} - ${tag}`;
+    case "rank":
+      return `#${row.rank} - ${tag}`;
+    case "address":
+      return `${shortAddress(row.wallet, 4, 4)} - ${tag}`;
+  }
+}
+
+export function buildAxiom(
+  rows: WalletRow[],
+  meta: ScanMeta,
+  options: AxiomOptions,
+): string {
+  const groups = options.group.trim() ? [options.group.trim()] : [];
+  return JSON.stringify(
+    rows.map((row) => ({
+      trackedWalletAddress: row.wallet,
+      name: axiomName(row, meta, options.nameBy),
+      emoji: options.emoji,
+      alertsOnToast: options.alertsOnToast,
+      alertsOnBubble: options.alertsOnBubble,
+      alertsOnFeed: options.alertsOnFeed,
+      groups,
+      sound: options.sound,
+    })),
+    null,
+    2,
+  );
+}
+
 export function buildExport(
   format: ExportFormat,
   rows: WalletRow[],
   meta: ScanMeta,
+  axiom: AxiomOptions = AXIOM_DEFAULTS,
 ): string {
   switch (format) {
+    case "axiom":
+      return buildAxiom(rows, meta, axiom);
+
     case "addresses":
       return rows.map((r) => r.wallet).join("\n");
 
@@ -122,8 +223,9 @@ export function buildExport(
 
 export function exportFilename(format: ExportFormat, meta: ScanMeta): string {
   const spec = EXPORT_FORMATS.find((f) => f.id === format);
-  const token = meta.token.slice(0, 10);
-  return `bagtrace-${meta.chain}-${meta.mode}-${token}.${spec?.extension ?? "txt"}`;
+  const tag = (meta.tokenSymbol ?? meta.token.slice(0, 10)).toLowerCase();
+  if (format === "axiom") return `highpnl-${tag}.json`;
+  return `bagtrace-${meta.chain}-${meta.mode}-${tag}.${spec?.extension ?? "txt"}`;
 }
 
 export function downloadFile(filename: string, content: string, mime: string): void {

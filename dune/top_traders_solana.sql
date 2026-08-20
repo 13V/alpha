@@ -66,6 +66,16 @@ fills AS (
       AND token_sold_amount > 0
 ),
 
+-- Token name/symbol. address_prefix is the lowercased first character of the
+-- mint and is the table's partition key, so this lookup is nearly free.
+token_meta AS (
+    SELECT symbol, name
+    FROM tokens_solana.fungible
+    WHERE token_mint_address = '{{token_address}}'
+      AND address_prefix = lower(substr('{{token_address}}', 1, 1))
+    LIMIT 1
+),
+
 supply AS (
     SELECT SUM(token_balance) AS total_supply
     FROM solana_utils.latest_balances
@@ -118,6 +128,8 @@ enriched AS (
         m.last_trade,
         m.market_price,
         s.total_supply,
+        tm.symbol                                                     AS token_symbol,
+        tm.name                                                       AS token_name,
         GREATEST(m.tokens_bought - m.tokens_sold, 0)                  AS net_position,
         m.usd_spent    / NULLIF(m.tokens_bought, 0)                   AS avg_buy_price,
         m.usd_received / NULLIF(m.tokens_sold,   0)                   AS avg_sell_price,
@@ -129,6 +141,7 @@ enriched AS (
              - COALESCE(m.usd_spent / NULLIF(m.tokens_bought, 0), 0)) AS unrealized_pnl_usd
     FROM marked m
     CROSS JOIN supply s
+    LEFT JOIN token_meta tm ON true
 )
 
 SELECT
@@ -170,6 +183,8 @@ SELECT
     first_trade,
     last_trade,
     date_diff('hour', first_trade, last_trade)            AS hold_hours,
+    token_symbol,
+    token_name,
     total_supply                                          AS circulating_supply
 FROM enriched
 ORDER BY realized_pnl_usd DESC

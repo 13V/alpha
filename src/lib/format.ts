@@ -38,7 +38,8 @@ export function formatPrice(value: number | null | undefined): string {
   if (abs >= 0.01) return `$${abs.toFixed(4)}`;
   const exponent = Math.floor(Math.log10(abs));
   const leadingZeros = Math.abs(exponent) - 1;
-  if (leadingZeros < 3) return `$${abs.toFixed(8)}`;
+  // switch to subscript early so one column never mixes both notations
+  if (leadingZeros < 2) return `$${abs.toFixed(6)}`;
   const digits = abs
     .toExponential(3)
     .split("e")[0]
