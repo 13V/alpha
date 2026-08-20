@@ -111,7 +111,6 @@ export function normalizeRow(row: Record<string, unknown>, index: number): Walle
     firstTrade: str(row.first_trade),
     lastTrade: str(row.last_trade ?? row.last_activity),
     holdHours: num(row.hold_hours),
-    solBalance: num(row.sol_balance),
   };
 }
 

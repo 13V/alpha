@@ -42,7 +42,6 @@ export interface WalletRow {
   firstTrade: string | null;
   lastTrade: string | null;
   holdHours: number | null;
-  solBalance: number | null;
 }
 
 export interface ScanMeta {

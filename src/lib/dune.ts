@@ -180,7 +180,7 @@ export class DuneClient {
       performance = "medium",
       limit,
       pollIntervalMs = 2000,
-      timeoutMs = 240_000,
+      timeoutMs = 600_000,
       signal,
     } = opts;
 
@@ -210,7 +210,7 @@ export class DuneClient {
         throw new DuneError(
           `Dune execution timed out after ${Math.round(timeoutMs / 1000)}s (execution ${execution_id})`,
           504,
-          "Try a shorter lookback window, or raise DUNE_PERFORMANCE to 'large'.",
+          "Cold Solana balance scans can run several minutes. Raise DUNE_TIMEOUT_MS, shorten the window, or use Bag size mode.",
         );
       }
 

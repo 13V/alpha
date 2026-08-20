@@ -10,6 +10,10 @@
 -- Balances are rolled up per OWNER — one owner can hold the same mint across
 -- several associated token accounts.
 --
+-- The table's sol_balance column is deliberately not surfaced: on an SPL row it
+-- carries the token account's rent-exempt minimum (~0.002 SOL), not the owner's
+-- wallet balance, so it reads as zero for everyone and means nothing.
+--
 -- Perf note: the table is filtered on token_mint_address, which the Dune docs
 -- name as the indexed access path. Circulating supply comes from a window over
 -- the same scan rather than a second aggregate, so the table is read once.
@@ -20,7 +24,6 @@ balances AS (
     SELECT
         token_balance_owner AS wallet,
         SUM(token_balance)  AS balance,
-        MAX(sol_balance)    AS sol_balance,
         MAX(block_time)     AS last_activity,
         COUNT(*)            AS token_accounts
     FROM solana_utils.latest_balances
@@ -33,7 +36,6 @@ ranked AS (
     SELECT
         wallet,
         balance,
-        sol_balance,
         last_activity,
         token_accounts,
         SUM(balance) OVER ()                      AS circulating_supply,
@@ -47,7 +49,6 @@ SELECT
     wallet,
     balance                                             AS tokens_held,
     balance / NULLIF(circulating_supply, 0) * 100       AS pct_supply_held,
-    sol_balance,
     token_accounts,
     last_activity,
     circulating_supply,

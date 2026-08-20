@@ -16,8 +16,11 @@ Solana, BNB Chain and Base up front; Ethereum, Arbitrum, Optimism and Polygon be
 
 | Mode | Ranks by | Reads | Typical run |
 | --- | --- | --- | --- |
-| **Profit** | realized PnL from DEX fills | `dex_solana.trades` / `dex.trades` | 2–35s |
-| **Bag size** | current balance | `solana_utils.latest_balances` / `tokens.transfers` | 9–16s |
+| **Profit** | realized PnL from DEX fills | `dex_solana.trades` / `dex.trades` | EVM 2–5s · Solana 1–10 min |
+| **Bag size** | current balance | `solana_utils.latest_balances` / `tokens.transfers` | EVM ~9s · Solana 3–6 min |
+
+Runtimes are honest ranges, not best cases. **EVM is consistently fast. Solana is not**, and
+the cause is `solana_utils.latest_balances` — see [Performance](#performance) below.
 
 Profit mode returns, per wallet: realized PnL, open PnL, profit multiple, ROI, average buy
 and sell price, **the market cap it entered and exited at**, USD and native-token flow, net
@@ -85,7 +88,8 @@ most recent priced fill.
 - **On EVM the wallet is `tx_from`**, the EOA that signed the swap — not `taker`, which is
   usually a router. Both are in the raw result.
 - **On Solana the wallet is `trader_id`**, and balances roll up per owner, not per token
-  account.
+  account. The table's `sol_balance` column is not surfaced: on an SPL row it holds the token
+  account's rent-exempt minimum (~0.002 SOL), not the owner's wallet balance.
 - **`amount_usd` is null on very thin pairs.** Those fills contribute nothing to the USD
   columns, which is why the native (SOL / ETH / BNB) columns matter on brand-new tokens.
 
@@ -103,11 +107,37 @@ Two things cost real time to discover, so they are written down here:
   known supply: BRETT on Base resolves to exactly 10,000,000,000.
 - **CTEs are inlined, so referencing one twice scans the table twice.** The first cut of
   these queries computed circulating supply in a second CTE over the same table; folding it
-  into a window function over a single scan took Solana holders from 286s to 16s and Solana
-  profit from 166s to 5s.
+  into a window function over a single scan removed a whole duplicate read.
 
-`DUNE_PERFORMANCE` defaults to `large`, which costs more credits per run but was ~8× faster
-in testing (121s → 16s on the same query). Set it to `medium` to trade speed for credits.
+## Performance
+
+Measured, not estimated:
+
+| Query | Cold token | Notes |
+| --- | --- | --- |
+| EVM holders | ~9s | `tokens.transfers`, prunes well |
+| EVM profit | 2–5s | `dex.trades` prunes on `blockchain` + `block_month` |
+| Solana holders | ~322s | full `solana_utils.latest_balances` scan |
+| Solana profit, 90d | ~620s | trade scan plus the same balances scan for supply |
+
+Two traps worth knowing about:
+
+- **Repeat runs against the same token are dramatically faster and will fool you.** Querying
+  one token over and over got Solana holders down to 16s; the same query against a token not
+  hit before took 322s. Benchmark on a fresh mint or you will measure Dune's cache.
+- **Running two queries at once roughly doubles both.** Concurrent Solana runs measured 662s
+  and 620s; the same holders query alone was 322s. They contend on the same scan.
+
+`solana_utils.latest_balances` has no partition key usable here — Dune's own docs say to
+filter on `token_mint_address`, which these queries do, and it is still a large read. If
+Solana latency matters more than the market-cap columns, drop the `supply` CTE from
+`top_traders_solana.sql`: the trade scan alone is fast, and losing it only costs the
+entry/exit market-cap columns.
+
+`DUNE_PERFORMANCE` defaults to `large`, which costs more credits but ran ~8× faster than
+`medium` on the same query (121s → 16s, both warm). Set it to `medium` to trade speed for
+credits. `DUNE_TIMEOUT_MS` defaults to 600s because a cold Solana scan will blow through a
+shorter ceiling.
 
 ---
 
@@ -152,6 +182,7 @@ src/
 | `DUNE_PERFORMANCE` | `large` | `small` \| `medium` \| `large` |
 | `DEFAULT_LOOKBACK_DAYS` | `90` | default trade window |
 | `DEFAULT_MIN_USD` | `50` | drop wallets under this total volume |
+| `DUNE_TIMEOUT_MS` | `600000` | how long to poll one execution |
 | `MAX_WALLET_LIMIT` | `500` | ceiling on one request |
 
 ## Deploying

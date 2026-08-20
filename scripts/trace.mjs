@@ -123,8 +123,8 @@ while (!["QUERY_STATE_COMPLETED", "QUERY_STATE_FAILED", "QUERY_STATE_CANCELLED",
   const status = await duneFetch(`/execution/${execution_id}/status`, apiKey);
   state = status.state;
   process.stderr.write(".");
-  if (Date.now() - started > 300_000) {
-    console.error("\nTimed out after 5 minutes.");
+  if (Date.now() - started > 900_000) {
+    console.error("\nTimed out after 15 minutes.");
     process.exit(1);
   }
 }

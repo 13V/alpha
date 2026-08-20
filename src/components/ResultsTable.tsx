@@ -173,14 +173,6 @@ const COLUMNS: Column[] = [
     render: (r) => formatPct(r.pctSupplyHeld, 3),
   },
   {
-    key: "solBalance",
-    header: "SOL",
-    title: "The wallet's own SOL balance — an empty wallet is usually a burner",
-    modes: ["holders"],
-    value: (r) => r.solBalance,
-    render: (r) => (r.solBalance == null ? <span className="dim">—</span> : r.solBalance.toFixed(2)),
-  },
-  {
     key: "positionStatus",
     header: "Position",
     modes: ["traders"],

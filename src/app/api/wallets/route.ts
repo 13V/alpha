@@ -121,7 +121,7 @@ async function scan(input: ScanRequest) {
     const execution = await client.run<Record<string, unknown>>(
       plan.queryId,
       plan.parameters,
-      { performance, limit },
+      { performance, limit, timeoutMs: envInt("DUNE_TIMEOUT_MS", 600_000) },
     );
 
     const rawRows = execution.result?.rows ?? [];
