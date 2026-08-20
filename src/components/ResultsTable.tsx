@@ -29,7 +29,7 @@ const COLUMNS: Array<{ key: SortKey; label: string; title?: string }> = [
     key: "realizedRoi",
     label: "ROI",
     title:
-      "Realized profit as a share of the USD this wallet actually spent in the window. Blank when the wallet was already holding when the window opened, because its true cost is unknown.",
+      "Realized profit as a share of the USD this wallet spent in the window. A wallet that closed everything lands on multiple - 1; one still holding lands lower.",
   },
   { key: "avgBuyMcap", label: "Entry MC" },
   { key: "avgSellMcap", label: "Exit MC" },
@@ -169,7 +169,7 @@ export default function ResultsTable({
                   {row.costBasis === "partial" && (
                     <span
                       className="dim"
-                      title="Sold more than it bought in this window, so it was already holding when the window opened and the cost basis is incomplete. Widen the window for a true figure."
+                      title="This wallet sold more than it bought inside the window, so part of its position was bought earlier. Profit is counted only on the tokens whose entry price is visible, so its real total may be higher. Widen the window to capture more of its history."
                     >
                       {" "}
                       ⚠

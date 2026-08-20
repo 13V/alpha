@@ -138,9 +138,16 @@ enriched AS (
         GREATEST(m.tokens_bought - m.tokens_sold, 0)                  AS net_position,
         m.usd_spent    / NULLIF(m.tokens_bought, 0)                   AS avg_buy_price,
         m.usd_received / NULLIF(m.tokens_sold,   0)                   AS avg_sell_price,
-        m.usd_received
-          - (m.usd_spent / NULLIF(m.tokens_bought, 0))
-            * LEAST(m.tokens_sold, m.tokens_bought)                   AS realized_pnl_usd,
+        -- Profit on the MATCHED portion only: the tokens whose buy price we
+        -- actually observed. Counting every dollar of proceeds while only
+        -- subtracting the cost of tokens bought in-window treats pre-window
+        -- tokens as free, and reports gains for wallets that sold below their
+        -- own entry. Measured across one token's top 100: $407,503 claimed
+        -- versus $63,039 real, with 34 wallets showing a profit on a sub-1x
+        -- multiple. This way the sign of PnL always agrees with the multiple.
+        (  (m.usd_received / NULLIF(m.tokens_sold,   0))
+         - (m.usd_spent    / NULLIF(m.tokens_bought, 0)) )
+          * LEAST(m.tokens_sold, m.tokens_bought)                     AS realized_pnl_usd,
         GREATEST(m.tokens_bought - m.tokens_sold, 0)
           * (m.market_price
              - COALESCE(m.usd_spent / NULLIF(m.tokens_bought, 0), 0)) AS unrealized_pnl_usd
@@ -156,16 +163,11 @@ SELECT
     unrealized_pnl_usd,
     realized_pnl_usd + unrealized_pnl_usd                 AS total_pnl_usd,
     avg_sell_price / NULLIF(avg_buy_price, 0)             AS profit_multiple,
-    -- ROI only means anything when the window contains this wallet's whole
-    -- cost basis. A wallet that sold more than it bought was already holding
-    -- when the window opened, so usd_spent understates what the position
-    -- really cost and the ratio explodes -- 144,534% off $1 spent, against a
-    -- 1.17x multiple, in one measured case. Report nothing rather than a
-    -- number that reads as real. `multiple` stays valid either way.
-    CASE
-        WHEN tokens_sold > tokens_bought * 1.01 THEN NULL
-        ELSE realized_pnl_usd / NULLIF(usd_spent, 0)
-    END                                                   AS realized_roi,
+    -- Now that PnL covers only the matched portion, ROI is well defined for
+    -- every wallet: realized profit against the capital it actually put in.
+    -- A wallet that closed everything lands on multiple - 1; one still holding
+    -- lands proportionally lower.
+    realized_pnl_usd / NULLIF(usd_spent, 0)               AS realized_roi,
     avg_buy_price,
     avg_sell_price,
     avg_buy_price  * total_supply                         AS avg_buy_mcap,

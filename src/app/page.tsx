@@ -9,7 +9,7 @@ import { formatMcap } from "@/lib/format";
 import type { ScanResponse } from "@/lib/types";
 
 const EVM_CHOICES: ChainId[] = ["base", "bnb", "ethereum"];
-const WINDOWS = [7, 30, 90];
+const WINDOWS = [7, 30, 90, 365];
 const KEY_STORE = "bagtrace-dune-key";
 
 interface Failure {
@@ -220,7 +220,7 @@ export default function Home() {
               onClick={() => setDays(n)}
               title="How far back to scan trades. Shorter costs fewer Dune credits."
             >
-              {n}d
+              {n < 365 ? `${n}d` : "1y"}
             </button>
           ))}
 
@@ -329,9 +329,9 @@ export default function Home() {
         </a>{" "}
         key — it stays in your browser and is only passed through to Dune.
         <br />
-        PnL counts DEX fills only. A ⚠ means the wallet was already holding when the window
-        opened, so its true cost is unknown and its ROI is left blank. Click any column to
-        sort.
+        Profit is counted only on tokens whose buy price is inside the window. A ⚠ means the
+        wallet also sold tokens it bought earlier, so its real total may be higher — widen the
+        window to capture more. Click any column to sort.
       </footer>
     </main>
   );

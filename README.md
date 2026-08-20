@@ -102,34 +102,38 @@ Weighted-average cost basis over the chosen window:
 ```
 avg_buy_price   = USD spent buying / tokens bought
 avg_sell_price  = USD received     / tokens sold
-realized_pnl    = USD received - avg_buy_price × min(tokens_sold, tokens_bought)
+realized_pnl    = (avg_sell_price - avg_buy_price) × min(tokens_sold, tokens_bought)
 profit_multiple = avg_sell_price / avg_buy_price
 ```
 
 Entry and exit market caps are those average prices × circulating supply.
 
-### Multiple and ROI are not the same number
+### Profit is counted on the matched portion only
 
-They answer different questions, and only line up in one case:
+A wallet often sells tokens it bought before the window opened. Their cost is invisible, and
+counting the proceeds anyway treats them as free — which reports a profit for wallets that
+sold *below* their own entry price.
 
-- **Multiple** is `avg_sell_price / avg_buy_price` — the price gain per token round-tripped.
-- **ROI** is `realized_pnl / usd_spent` — profit against all the capital deployed in the
-  window.
+So PnL covers only the **matched** portion, the tokens whose buy price is actually in view:
 
-They match when a wallet's whole position opened and closed inside the window. They diverge
-when it did not: a wallet that bought a lot and sold a little shows a big multiple and a
-small ROI, which is correct — most of its capital is still in an open position.
+```
+matched   = min(tokens_sold, tokens_bought)
+pnl       = (avg_sell_price - avg_buy_price) × matched
+roi       = pnl / usd_spent
+multiple  = avg_sell_price / avg_buy_price
+```
 
-Where ROI genuinely breaks is a wallet that sold **more** than it bought in the window. Then
-`usd_spent` is missing whatever the pre-window tokens cost, and the ratio explodes. Measured
-on one token: a wallet that spent $1 and sold $1,447 reported **144,534% ROI against a 1.17x
-multiple**. Across that token's 100 wallets, the 14 with complete cost basis agreed with the
-multiple to a median of 0.29 percentage points, while the 86 without diverged by a median of
-99.6 points.
+The sign of PnL therefore always agrees with the multiple, and ROI is defined for every
+wallet: one that closed its whole position lands on `multiple - 1`, one still holding lands
+proportionally lower.
 
-So **ROI is returned as null whenever cost basis is incomplete** — the ⚠ rows — and shows as
-`—`. The multiple stays valid either way. Sorting by ROI sinks those rows to the bottom
-rather than letting a fake number top the list.
+Measured on one token's top 100 before this was fixed: **$407,503 of claimed profit against
+$63,039 real**, with **34 of 100 wallets showing a gain on a sub-1x multiple**. One wallet
+reported +$73,127 on a 1.00x multiple; its matched profit was $332.
+
+The trade-off is that a wallet whose entry sits before the window shows less profit than it
+really made — flagged with ⚠. Widening the window is the fix: it pulls more of that wallet's
+history into view. If most rows carry ⚠, the token is older than the window you picked.
 
 ### Read this before you trust a row
 
