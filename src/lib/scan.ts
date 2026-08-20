@@ -108,7 +108,7 @@ export function resolveScan(input: ScanRequest): ResolvedScan | ScanFailure {
   const mode: Mode = input.mode === "holders" ? "holders" : "traders";
   const limit = clamp(Math.round(Number(input.limit) || 100), 1, envInt("MAX_WALLET_LIMIT", 500));
   const lookbackDays = clamp(
-    Math.round(Number(input.lookbackDays) || envInt("DEFAULT_LOOKBACK_DAYS", 90)),
+    Math.round(Number(input.lookbackDays) || envInt("DEFAULT_LOOKBACK_DAYS", 365)),
     1,
     1095,
   );

@@ -95,12 +95,17 @@ export function formatDuration(hours: number | null | undefined): string {
  * Dune hands timestamps back as "2026-08-19 23:52:38.000 UTC", which Date
  * cannot parse. Normalise the zone suffix and the space separator first.
  */
-export function formatWhen(value: string | null | undefined): string {
-  if (!value) return "—";
+export function parseDuneTime(value: string | null | undefined): number | null {
+  if (!value) return null;
   const normalized = value.trim().replace(/\s+UTC$/i, "Z").replace(" ", "T");
   const t = new Date(normalized.endsWith("Z") ? normalized : `${normalized}Z`);
-  if (Number.isNaN(t.getTime())) return "—";
-  return t.toISOString().slice(0, 16).replace("T", " ");
+  return Number.isNaN(t.getTime()) ? null : t.getTime();
+}
+
+export function formatWhen(value: string | null | undefined): string {
+  const t = parseDuneTime(value);
+  if (t == null) return "—";
+  return new Date(t).toISOString().slice(0, 16).replace("T", " ");
 }
 
 export function shortAddress(address: string, head = 4, tail = 4): string {

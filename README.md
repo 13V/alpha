@@ -150,6 +150,25 @@ build scored a lower median (8.2%) while subtracting no cost at all — right an
 wrong reason, and useless multiples. The residual gap is Dune's price series versus the
 terminal's, and wallets whose transfers came from linked wallets that a terminal may net out.
 
+### The window must cover the token's whole life
+
+The default trade window is **365 days**, and shortening it is the single easiest way to get
+a wrong answer.
+
+TOESCOIN launched 2026-05-19. A 90-day window opening 2026-05-22 misses it by three days —
+and with it the transfer at 09:52 on the 19th that gave the top wallet its entire position.
+Same token, same query, only the window differs:
+
+| window | top wallet visible? | its multiple |
+| --- | --- | --- |
+| 1 year | yes, ranked #2 | **398x** |
+| 90 days | **absent entirely** | — |
+
+It costs nothing to avoid: that token took 58.6s over a year and 59.5s over 90 days. Partition
+pruning means the scan is dominated by the token's own rows, not by the span. So the app now
+defaults to a year, and warns when a result's earliest trade sits at the window edge — the
+signature of a token older than the window you picked.
+
 **This applies to Solana only.** The EVM query still uses plain cash accounting; EVM tokens
 rarely show the pump.fun pattern, but the same treatment would apply via `tokens.transfers`.
 
@@ -257,7 +276,7 @@ Everything is optional.
 | `CACHE_TTL_SECONDS` | `1800` | how long a result is reused |
 | `DUNE_PERFORMANCE` | `large` | `small` \| `medium` \| `large` |
 | `DUNE_TIMEOUT_MS` | `600000` | how long to poll one execution |
-| `DEFAULT_LOOKBACK_DAYS` | `90` | default trade window |
+| `DEFAULT_LOOKBACK_DAYS` | `365` | default trade window |
 | `DEFAULT_MIN_USD` | `50` | drop wallets under this total volume |
 | `MAX_WALLET_LIMIT` | `500` | ceiling on one request |
 

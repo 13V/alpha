@@ -5,11 +5,12 @@ import { useEffect, useMemo, useState } from "react";
 import ExportToolbar from "@/components/ExportToolbar";
 import ResultsTable from "@/components/ResultsTable";
 import { CHAINS, detectChain, isEvmAddress, type ChainId } from "@/lib/chains";
-import { formatMcap } from "@/lib/format";
+import { formatMcap, parseDuneTime } from "@/lib/format";
 import type { ScanResponse } from "@/lib/types";
 
 const EVM_CHOICES: ChainId[] = ["base", "bnb", "ethereum"];
 const WINDOWS = [7, 30, 90, 365];
+const DAY_MS = 86_400_000;
 const KEY_STORE = "bagtrace-dune-key";
 
 interface Failure {
@@ -23,7 +24,7 @@ export default function Home() {
   const [keySaved, setKeySaved] = useState(false);
   const [editingKey, setEditingKey] = useState(false);
   const [evmChain, setEvmChain] = useState<ChainId>("base");
-  const [days, setDays] = useState(90);
+  const [days, setDays] = useState(365);
 
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -127,6 +128,19 @@ export default function Home() {
       return next;
     });
   }
+
+  // A window that opens after the token launched hides the launch-period
+  // acquisitions, which is exactly where the winners are. Detect it rather
+  // than let the user read a truncated list as the whole story.
+  const truncated = useMemo(() => {
+    if (!data || data.rows.length === 0 || data.meta.lookbackDays == null) return false;
+    const times = data.rows
+      .map((r) => parseDuneTime(r.firstTrade))
+      .filter((t): t is number => t != null);
+    if (times.length === 0) return false;
+    const windowStart = Date.now() - data.meta.lookbackDays * DAY_MS;
+    return Math.min(...times) - windowStart < 2 * DAY_MS;
+  }, [data]);
 
   const exportRows = useMemo(() => {
     if (!data) return [];
@@ -272,6 +286,19 @@ export default function Home() {
                   : ""}
             </span>
           </div>
+
+          {truncated && (
+            <div className="msg" style={{ margin: "0 0 0.75rem" }}>
+              <strong style={{ color: "var(--accent)" }}>
+                This token is older than the {data.meta.lookbackDays}-day window
+              </strong>
+              <span>
+                Its earliest trades sit right at the edge, so buys and transfers from before
+                that are missing and these wallets look less profitable than they were. Run it
+                again on a longer window.
+              </span>
+            </div>
+          )}
 
           <ExportToolbar
             rows={exportRows}
