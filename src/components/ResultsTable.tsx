@@ -34,13 +34,13 @@ const COLUMNS: Array<{ key: SortKey; label: string; title?: string }> = [
   },
   { key: "avgBuyMcap", label: "Entry MC" },
   { key: "avgSellMcap", label: "Exit MC" },
-  { key: "usdSpent", label: "Bought" },
+  { key: "usdSpent", label: "Cost in", title: "What this wallet paid, including tokens it received by transfer valued at the price when they landed" },
   { key: "usdReceived", label: "Sold" },
   {
     key: "buyCoverage",
     label: "Buys seen",
     title:
-      "How much of what this wallet sold we can actually see it buy. 100% means the PnL is trustworthy. 0% means every token it sold arrived from somewhere Dune did not record, so the PnL has no cost subtracted and is an upper bound.",
+      "How much of what this wallet sold we can account for — DEX buys plus tokens received by transfer, valued at the price when they landed. 100% means the PnL rests on a real cost basis.",
   },
 ];
 

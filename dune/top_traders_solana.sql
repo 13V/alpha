@@ -1,24 +1,37 @@
 -- ============================================================================
 -- Bagtrace — Top traders of a Solana SPL token, ranked by realized PnL.
 -- ============================================================================
--- Source: dex_solana.trades (every decoded Solana DEX/AMM swap)
---         solana_utils.latest_balances (one aggregate, for circulating supply)
+-- Source: dex_solana.trades       every decoded Solana DEX/AMM swap
+--         tokens_solana.transfers SPL movements, for tokens that arrived
+--                                 without a swap
+--         solana_utils.latest_balances  circulating supply
 --
 -- Parameters:
 --   token_address  text    SPL mint address
 --   wallet_limit   number  how many wallets to return
---   lookback_days  number  only scan trades from the last N days (cost control)
---   min_usd        number  drop wallets whose total traded volume is below this
+--   lookback_days  number  how far back to scan (cost control)
+--   min_usd        number  drop wallets below this traded volume
 --
--- Accounting: weighted-average cost basis.
---   avg_buy_price  = USD spent / tokens bought
---   realized_pnl   = USD received - avg_buy_price * tokens sold (capped at bought)
---   net_position   = tokens bought - tokens sold, i.e. the bag built on DEXes
---   unrealized_pnl = net_position * (last traded price - avg_buy_price)
+-- WHY TRANSFERS MATTER
+-- On pump.fun tokens most of the real winners never appear as buyers. Measured
+-- on 6ehEcTMCc85aNF4x9CWx8HuvWGhxQtvKdhKVf2HDpump, recorded sells exceeded
+-- recorded buys by 1.68x token-wide, and the wallet a Solana terminal ranks
+-- first had 1,290 sell fills and zero buy fills across every trade table Dune
+-- has, including the raw bonding-curve event log. It had not bought at all: it
+-- RECEIVED 21,865,947 tokens in one transfer, then sold them.
 --
--- Perf note: the trade table is read exactly once. The market price comes from
--- a window over the per-wallet aggregate rather than a second pass over fills,
--- and supply is a single aggregate cross-joined in.
+-- Treating those tokens as free costs nothing and reports every dollar of
+-- proceeds as profit. Matching sales only against recorded buys scores such a
+-- wallet at exactly zero and hides it. Both are wrong.
+--
+-- So tokens that arrive by transfer are valued at the market price at the
+-- moment they land, and that value becomes cost basis. For the wallet above
+-- this yields $658 of basis against a terminal's independently published
+-- $658.0 -- the same method, reproduced on Dune.
+--
+-- Transfers that are the token leg of a swap are excluded by tx id, otherwise
+-- every DEX buy would be counted twice. Transfers OUT reduce the remaining
+-- position but are never counted as proceeds: moving tokens is not selling.
 -- ============================================================================
 
 WITH
@@ -26,17 +39,14 @@ fills AS (
     SELECT
         trader_id                                                   AS wallet,
         block_time,
+        tx_id,
         'buy'                                                       AS side,
         token_bought_amount                                         AS token_amount,
         COALESCE(amount_usd, 0)                                     AS usd_amount,
         CASE
             WHEN token_sold_mint_address = 'So11111111111111111111111111111111111111112'
             THEN token_sold_amount ELSE 0
-        END                                                         AS sol_amount,
-        CASE
-            WHEN COALESCE(amount_usd, 0) > 0 AND token_bought_amount > 0
-            THEN amount_usd / token_bought_amount
-        END                                                         AS fill_price
+        END                                                         AS sol_amount
     FROM dex_solana.trades
     WHERE token_bought_mint_address = '{{token_address}}'
       AND block_month >= CAST(date_trunc('month', date_add('day', -{{lookback_days}}, now())) AS date)
@@ -48,16 +58,13 @@ fills AS (
     SELECT
         trader_id,
         block_time,
+        tx_id,
         'sell',
         token_sold_amount,
         COALESCE(amount_usd, 0),
         CASE
             WHEN token_bought_mint_address = 'So11111111111111111111111111111111111111112'
             THEN token_bought_amount ELSE 0
-        END,
-        CASE
-            WHEN COALESCE(amount_usd, 0) > 0 AND token_sold_amount > 0
-            THEN amount_usd / token_sold_amount
         END
     FROM dex_solana.trades
     WHERE token_sold_mint_address = '{{token_address}}'
@@ -66,20 +73,89 @@ fills AS (
       AND token_sold_amount > 0
 ),
 
--- Token name/symbol. address_prefix is the lowercased first character of the
--- mint and is the table's partition key, so this lookup is nearly free.
-token_meta AS (
-    SELECT symbol, name
-    FROM tokens_solana.fungible
-    WHERE token_mint_address = '{{token_address}}'
-      AND address_prefix = lower(substr('{{token_address}}', 1, 1))
-    LIMIT 1
+-- Per-minute VWAP from the fills themselves. This is the price used to value
+-- tokens that arrive by transfer.
+price_minute AS (
+    SELECT
+        date_trunc('minute', block_time)              AS ts,
+        SUM(usd_amount) / SUM(token_amount)           AS price
+    FROM fills
+    WHERE usd_amount > 0 AND token_amount > 0
+    GROUP BY 1
+),
+
+swap_tx AS (
+    SELECT DISTINCT tx_id FROM fills
+),
+
+-- One pass over the transfer log, fanned into a credit and a debit leg.
+transfer_legs AS (
+    SELECT
+        x.wallet,
+        x.direction,
+        x.tokens,
+        r.block_time
+    FROM tokens_solana.transfers r
+    LEFT JOIN swap_tx s ON s.tx_id = r.tx_id
+    CROSS JOIN UNNEST(ARRAY[
+        ROW(r.to_owner,   'in' , r.amount_display),
+        ROW(r.from_owner, 'out', r.amount_display)
+    ]) AS x(wallet, direction, tokens)
+    WHERE r.token_mint_address = '{{token_address}}'
+      AND r.block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
+      AND r.block_time >= date_add('day', -{{lookback_days}}, now())
+      AND s.tx_id IS NULL          -- not the token leg of a swap
+      AND x.wallet IS NOT NULL
+      AND x.tokens > 0
+),
+
+-- As-of join: carry the last known price forward onto each transfer.
+timeline AS (
+    SELECT ts AS block_time, price,
+           CAST(NULL AS varchar) AS wallet,
+           CAST(NULL AS varchar) AS direction,
+           CAST(NULL AS double)  AS tokens
+    FROM price_minute
+    UNION ALL
+    SELECT block_time, CAST(NULL AS double), wallet, direction, CAST(tokens AS double)
+    FROM transfer_legs
+),
+
+priced_transfers AS (
+    SELECT
+        wallet,
+        direction,
+        tokens,
+        LAST_VALUE(price) IGNORE NULLS OVER (
+            ORDER BY block_time
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS price_then
+    FROM timeline
+),
+
+per_transfer_wallet AS (
+    SELECT
+        wallet,
+        SUM(CASE WHEN direction = 'in'  THEN tokens ELSE 0 END)                        AS tokens_in,
+        SUM(CASE WHEN direction = 'in'  THEN tokens * COALESCE(price_then, 0) ELSE 0 END) AS value_in,
+        SUM(CASE WHEN direction = 'out' THEN tokens ELSE 0 END)                        AS tokens_out
+    FROM priced_transfers
+    WHERE wallet IS NOT NULL
+    GROUP BY 1
 ),
 
 supply AS (
     SELECT SUM(token_balance) AS total_supply
     FROM solana_utils.latest_balances
     WHERE token_mint_address = '{{token_address}}'
+),
+
+token_meta AS (
+    SELECT symbol, name
+    FROM tokens_solana.fungible
+    WHERE token_mint_address = '{{token_address}}'
+      AND address_prefix = lower(substr('{{token_address}}', 1, 1))
+    LIMIT 1
 ),
 
 per_wallet AS (
@@ -94,64 +170,47 @@ per_wallet AS (
         COUNT_IF(side = 'buy')                                    AS buy_count,
         COUNT_IF(side = 'sell')                                   AS sell_count,
         MIN(block_time)                                           AS first_trade,
-        MAX(block_time)                                           AS last_trade,
-        MAX_BY(fill_price, block_time) FILTER (WHERE fill_price IS NOT NULL) AS wallet_last_price,
-        MAX(block_time)                FILTER (WHERE fill_price IS NOT NULL) AS wallet_priced_at
+        MAX(block_time)                                           AS last_trade
     FROM fills
     GROUP BY 1
-    -- Apply the USD floor only where the pair actually has USD pricing. On a
-    -- brand-new or very thin pair amount_usd is null on every fill, and a naive
-    -- floor would drop every wallet and report "no results" for a token that
-    -- did in fact trade.
     HAVING SUM(usd_amount) >= {{min_usd}}
         OR SUM(usd_amount) = 0
 ),
 
-marked AS (
+joined AS (
     SELECT
         w.*,
-        -- most recent priced fill anywhere in the result = the mark price
-        FIRST_VALUE(w.wallet_last_price) OVER (
-            ORDER BY w.wallet_priced_at DESC NULLS LAST
-            ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-        ) AS market_price
+        COALESCE(t.tokens_in, 0)  AS tokens_in,
+        COALESCE(t.value_in, 0)   AS value_in,
+        COALESCE(t.tokens_out, 0) AS tokens_out,
+        -- everything the wallet ever got hold of, and what it cost
+        w.tokens_bought + COALESCE(t.tokens_in, 0) AS acquired_tokens,
+        w.usd_spent     + COALESCE(t.value_in, 0)  AS acquired_cost
     FROM per_wallet w
+    LEFT JOIN per_transfer_wallet t ON t.wallet = w.wallet
+),
+
+marked AS (
+    SELECT
+        j.*,
+        j.acquired_cost / NULLIF(j.acquired_tokens, 0) AS avg_cost_price,
+        (SELECT price FROM price_minute ORDER BY ts DESC LIMIT 1) AS market_price
+    FROM joined j
 ),
 
 enriched AS (
     SELECT
-        m.wallet,
-        m.tokens_bought,
-        m.tokens_sold,
-        m.usd_spent,
-        m.usd_received,
-        m.sol_spent,
-        m.sol_received,
-        m.buy_count,
-        m.sell_count,
-        m.first_trade,
-        m.last_trade,
-        m.market_price,
+        m.*,
         s.total_supply,
-        tm.symbol                                                     AS token_symbol,
-        tm.name                                                       AS token_name,
-        GREATEST(m.tokens_bought - m.tokens_sold, 0)                  AS net_position,
-        m.usd_spent    / NULLIF(m.tokens_bought, 0)                   AS avg_buy_price,
-        m.usd_received / NULLIF(m.tokens_sold,   0)                   AS avg_sell_price,
-        -- Cash accounting: what came out minus what went in. This is the
-        -- convention Solana terminals (Padre, Axiom) use, and it is the only
-        -- one that works here, because Dune's Solana buy-side coverage is
-        -- incomplete. On one measured pump.fun token, recorded sells exceeded
-        -- recorded buys by 1.68x in token terms and only 9 bonding-curve buy
-        -- fills existed at all, so the earliest buyers -- the ones who
-        -- actually made the money -- have no buy row to match against. A
-        -- matched-only formula scores exactly those wallets at zero and hides
-        -- them. Where buys are missing this is an UPPER BOUND, flagged below
-        -- as cost_basis = 'partial'.
-        m.usd_received - m.usd_spent                                  AS realized_pnl_usd,
-        GREATEST(m.tokens_bought - m.tokens_sold, 0)
-          * (m.market_price
-             - COALESCE(m.usd_spent / NULLIF(m.tokens_bought, 0), 0)) AS unrealized_pnl_usd
+        tm.symbol AS token_symbol,
+        tm.name   AS token_name,
+        GREATEST(m.acquired_tokens - m.tokens_sold - m.tokens_out, 0) AS net_position,
+        m.usd_received / NULLIF(m.tokens_sold, 0)                     AS avg_sell_price,
+        -- proceeds minus the cost of what was sold, on a basis that now
+        -- includes tokens that arrived by transfer
+        m.usd_received
+          - (m.acquired_cost / NULLIF(m.acquired_tokens, 0))
+            * LEAST(m.tokens_sold, m.acquired_tokens)                 AS realized_pnl_usd
     FROM marked m
     CROSS JOIN supply s
     LEFT JOIN token_meta tm ON true
@@ -161,45 +220,38 @@ SELECT
     ROW_NUMBER() OVER (ORDER BY realized_pnl_usd DESC)    AS rank,
     wallet,
     realized_pnl_usd,
-    unrealized_pnl_usd,
-    realized_pnl_usd + unrealized_pnl_usd                 AS total_pnl_usd,
-    avg_sell_price / NULLIF(avg_buy_price, 0)             AS profit_multiple,
-    -- Now that PnL covers only the matched portion, ROI is well defined for
-    -- every wallet: realized profit against the capital it actually put in.
-    -- A wallet that closed everything lands on multiple - 1; one still holding
-    -- lands proportionally lower.
-    realized_pnl_usd / NULLIF(usd_spent, 0)               AS realized_roi,
-    avg_buy_price,
+    net_position * (market_price - avg_cost_price)        AS unrealized_pnl_usd,
+    realized_pnl_usd + net_position * (market_price - avg_cost_price) AS total_pnl_usd,
+    avg_sell_price / NULLIF(avg_cost_price, 0)            AS profit_multiple,
+    realized_pnl_usd / NULLIF(acquired_cost, 0)           AS realized_roi,
+    avg_cost_price                                        AS avg_buy_price,
     avg_sell_price,
-    avg_buy_price  * total_supply                         AS avg_buy_mcap,
+    avg_cost_price * total_supply                         AS avg_buy_mcap,
     avg_sell_price * total_supply                         AS avg_sell_mcap,
     market_price   * total_supply                         AS current_mcap,
-    usd_spent,
+    acquired_cost                                         AS usd_spent,
     usd_received,
     sol_spent,
     sol_received,
-    tokens_bought,
+    acquired_tokens                                       AS tokens_bought,
     tokens_sold,
+    tokens_in                                             AS tokens_received,
+    value_in                                              AS received_value_usd,
     net_position                                          AS tokens_held,
     net_position * market_price                           AS value_usd,
     net_position / NULLIF(total_supply, 0) * 100          AS pct_supply_held,
     CASE
-        WHEN tokens_sold >= tokens_bought * 0.99 THEN 'closed'
-        WHEN tokens_sold > 0                     THEN 'partial'
+        WHEN tokens_sold >= acquired_tokens * 0.99 THEN 'closed'
+        WHEN tokens_sold > 0                       THEN 'partial'
         ELSE 'holding'
     END                                                   AS position_status,
-    -- A wallet that sold more than it bought inside the window was already
-    -- holding when the window opened, so its cost basis is incomplete and the
-    -- multiple can disagree with the PnL. Flag it rather than hide it.
     CASE
-        WHEN tokens_sold > tokens_bought * 1.01 THEN 'partial'
+        WHEN tokens_sold > acquired_tokens * 1.01 THEN 'partial'
         ELSE 'full'
     END                                                   AS cost_basis,
-    -- How much of what this wallet sold we can actually see it buy. 1.0 means
-    -- the PnL above is trustworthy; 0 means every token it sold arrived from
-    -- somewhere Dune did not record, so the PnL is an upper bound with no
-    -- cost subtracted at all. Rank with this in view, not just the dollars.
-    LEAST(tokens_bought / NULLIF(tokens_sold, 0), 1.0)    AS buy_coverage,
+    -- how much of what this wallet sold we can account for, buys plus
+    -- priced transfers in. 1.0 means the PnL above rests on a real cost.
+    LEAST(acquired_tokens / NULLIF(tokens_sold, 0), 1.0)  AS buy_coverage,
     buy_count,
     sell_count,
     first_trade,

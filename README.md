@@ -108,66 +108,48 @@ profit_multiple = avg_sell_price / avg_buy_price
 
 Entry and exit market caps are those average prices × circulating supply.
 
-### Dune's Solana buy-side coverage is incomplete — read this first
+### Cost basis includes tokens that arrive by transfer
 
-On pump.fun tokens, `dex_solana.trades` records far more selling than buying. Measured on
-one token (`6ehEcTMCc85aNF4x9CWx8HuvWGhxQtvKdhKVf2HDpump`):
+On pump.fun tokens most of the real winners never appear as buyers at all. Measured on
+`6ehEcTMCc85aNF4x9CWx8HuvWGhxQtvKdhKVf2HDpump`, recorded sells exceeded recorded buys by
+**1.68x** token-wide, and the wallet a Solana terminal ranks first had **1,290 sell fills and
+zero buy fills** — across `dex_solana.trades`, `pumpdotfun_solana.trades` and the raw
+`pump_evt_tradeevent` bonding-curve log alike.
 
-| project | side | fills | tokens |
-| --- | --- | --- | --- |
-| pumpdotfun | buy | **9** | 813M |
-| pumpswap | buy | 735,183 | 3.53B |
-| pumpswap | sell | 501,780 | **7.39B** |
+It had not bought. It **received 21,865,947 tokens in a single transfer**, then sold them.
 
-Token-wide, recorded sells exceed recorded buys by **1.68x** — 3.06 billion tokens sold that
-were never recorded as bought. Nine bonding-curve buy fills exist for a token that ran to a
-$12M market cap. The wallet a Solana terminal ranks first on that token has **1,290 sell
-fills and zero buy fills** in Dune.
+Two obvious treatments are both wrong. Treating those tokens as free reports every dollar of
+proceeds as profit. Matching sales only against recorded buys scores such a wallet at exactly
+zero and hides the biggest winners entirely — tried, and it dropped all ten of a terminal's
+top wallets out of our top 100.
 
-Nothing downstream can repair this. A "match each sale to a recorded buy" formula scores
-exactly those wallets at zero and hides the biggest winners entirely — tried, and it dropped
-all ten of a terminal's top wallets out of our top 100.
+So tokens arriving by transfer are **valued at the market price at the moment they land**
+(per-minute VWAP from DEX fills), and that value becomes cost basis. Reproducing the wallet
+above:
 
-So PnL is **cash accounting**: `usd_received - usd_spent`, the same convention Padre and
-Axiom use. Against a terminal's published figures for that token, all ten of its top wallets
-now appear in our top 100 with a median error of **8.2%**.
+| | Bagtrace | Terminal |
+| --- | --- | --- |
+| tokens received | 21,865,947 | 21.9M |
+| valued at | **$659** | **$658.0** |
+| entry market cap | **$30,143** | **$30.1K** |
+| realized PnL | $173,236 | $179,690 |
 
-The residual error is the missing buys. Where a wallet's purchases were not recorded, no cost
-is subtracted and its PnL is an **upper bound** — which is why some wallets rank above where a
-terminal puts them. The **Buys seen** column makes this legible per row:
-`tokens_bought / tokens_sold`, capped at 1. 100% means the number is trustworthy; 0% means
-every token it sold arrived from somewhere Dune did not record.
+Same method, reproduced on Dune. Buy coverage across that token's top 100 went from mostly
+**0% to a median of 96%, with no row left at 0%**, and multiples became meaningful — 398x,
+275x, 206x where everything previously read ~1x.
 
-**If you need terminal-grade Solana accuracy, Dune is the wrong source.** It is an analytics
-warehouse, not a Solana-native indexer. Bagtrace is honest about the gap rather than papering
-over it, but it cannot close it.
+Transfers that are the token leg of a swap are excluded by `tx_id`, or every DEX buy would be
+counted twice. Transfers **out** reduce the remaining position but are never counted as
+proceeds: moving tokens is not selling.
 
-### Older behaviour: matched-portion accounting
+**Accuracy against the terminal**, same token, its published top ten: seven appear in our top
+100, median error 17.6%, best cases within 0.0%, 3.6% and 9.0%. The earlier cash-accounting
+build scored a lower median (8.2%) while subtracting no cost at all — right answers for the
+wrong reason, and useless multiples. The residual gap is Dune's price series versus the
+terminal's, and wallets whose transfers came from linked wallets that a terminal may net out.
 
-A wallet often sells tokens it bought before the window opened. Their cost is invisible, and
-counting the proceeds anyway treats them as free — which reports a profit for wallets that
-sold *below* their own entry price.
-
-So PnL covers only the **matched** portion, the tokens whose buy price is actually in view:
-
-```
-matched   = min(tokens_sold, tokens_bought)
-pnl       = (avg_sell_price - avg_buy_price) × matched
-roi       = pnl / usd_spent
-multiple  = avg_sell_price / avg_buy_price
-```
-
-The sign of PnL therefore always agrees with the multiple, and ROI is defined for every
-wallet: one that closed its whole position lands on `multiple - 1`, one still holding lands
-proportionally lower.
-
-Measured on one token's top 100 before this was fixed: **$407,503 of claimed profit against
-$63,039 real**, with **34 of 100 wallets showing a gain on a sub-1x multiple**. One wallet
-reported +$73,127 on a 1.00x multiple; its matched profit was $332.
-
-The trade-off is that a wallet whose entry sits before the window shows less profit than it
-really made — flagged with ⚠. Widening the window is the fix: it pulls more of that wallet's
-history into view. If most rows carry ⚠, the token is older than the window you picked.
+**This applies to Solana only.** The EVM query still uses plain cash accounting; EVM tokens
+rarely show the pump.fun pattern, but the same treatment would apply via `tokens.transfers`.
 
 ### Read this before you trust a row
 

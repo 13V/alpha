@@ -329,10 +329,10 @@ export default function Home() {
         </a>{" "}
         key — it stays in your browser and is only passed through to Dune.
         <br />
-        PnL is what came out minus what went in, over DEX fills Dune indexed.{" "}
-        <b>Buys seen</b> is how much of each wallet&rsquo;s sales we can match to a recorded
-        buy — at 0% the PnL has no cost subtracted and is an upper bound. Dune&rsquo;s Solana
-        buy-side coverage is incomplete on pump.fun tokens. Click any column to sort.
+        Cost basis counts DEX buys <i>and</i> tokens received by transfer, valued at the price
+        when they landed — which is how the winners on pump.fun tokens actually acquire their
+        bags. <b>Buys seen</b> is how much of each wallet&rsquo;s sales that accounts for. Click
+        any column to sort.
       </footer>
     </main>
   );
