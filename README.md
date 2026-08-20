@@ -181,7 +181,8 @@ scripts/
   trace.mjs                 CLI: CA in, table / CSV / JSON out
 src/
   app/page.tsx              the whole UI
-  app/api/wallets/route.ts  validate → plan → execute on Dune → normalize
+  app/api/trace/route.ts    start a Dune execution, then poll it
+  lib/scan.ts               validate the request and pick the query
   lib/dune.ts               Data API client (execute, poll, results)
   lib/export.ts             Axiom payload and the other formats
 ```
@@ -201,10 +202,40 @@ Everything is optional.
 | `DEFAULT_MIN_USD` | `50` | drop wallets under this total volume |
 | `MAX_WALLET_LIMIT` | `500` | ceiling on one request |
 
-## Deploying
+## Deploying to Vercel
 
-Stock Next.js — `vercel deploy`, or `npm run build && npm start`. No env vars required.
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/13V/alpha)
 
-Traces routinely outlast the 10s default function timeout on serverless hosts. On Vercel,
-raise `maxDuration` for the route, or run somewhere without a hard request cap — a cold
-Solana trace can run several minutes.
+Import the repo and deploy. **No environment variables are required** — visitors bring their
+own Dune key and the queries are public. Verified by running the production build with the
+Dune environment stripped out entirely.
+
+### Why it fits inside a serverless timeout
+
+A cold Solana trace takes 5–10 minutes on Dune, and Vercel caps functions at **300s on Hobby**
+and **800s on Pro**. A single blocking request would 504.
+
+So `/api/trace` never waits for the query. One `POST` starts the Dune execution and returns an
+`executionId`; the browser polls the same route until it reports `done`. Every invocation is a
+single short Dune round trip — measured at **0.87s to start and 0.18–0.54s per poll** while the
+underlying query ran for far longer. The route caps itself at `maxDuration = 60`, which is well
+inside even the Hobby ceiling, and the query keeps running on Dune regardless of any one
+request.
+
+There is nothing to configure for this. If you would rather have a plain blocking call for
+scripting, use `scripts/trace.mjs`, which talks to Dune directly and has no timeout ceiling.
+
+### Notes for a deployed instance
+
+- **The result cache is per-instance.** `CACHE_TTL_SECONDS` uses process memory, so on
+  serverless it only helps when requests land on a warm instance. It is a bonus, not a
+  guarantee — put a shared cache in front if you need one.
+- **Keys are never persisted.** A visitor's key lives in their `localStorage`, is sent with
+  each request, and is used and discarded. It is deliberately excluded from the cache key so
+  it cannot influence or leak across cached results.
+- **Set `DUNE_API_KEY` only for a private instance**, where you want to pay for everyone's
+  traces. Requests that carry their own key still use that key.
+
+### Anywhere else
+
+`npm run build && npm start`. Node 20+.

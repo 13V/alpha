@@ -68,26 +68,49 @@ export default function Home() {
     setKeySaved(true);
     setEditingKey(false);
 
-    try {
-      const res = await fetch("/api/wallets", {
+    const params = {
+      apiKey: key,
+      token: token.trim(),
+      chain: needsChain ? evmChain : undefined,
+      mode: "traders",
+      limit: 100,
+      lookbackDays: days,
+    };
+
+    const call = async (body: Record<string, unknown>) => {
+      const res = await fetch("/api/trace", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          apiKey: key,
-          token: token.trim(),
-          chain: needsChain ? evmChain : undefined,
-          mode: "traders",
-          limit: 100,
-          lookbackDays: days,
-        }),
+        body: JSON.stringify(body),
       });
-      const body = await res.json();
-      if (!res.ok) {
+      return { ok: res.ok, body: await res.json() };
+    };
+
+    try {
+      // Start the execution, then poll it. Each request is a short round trip,
+      // so a multi-minute Dune query never holds a serverless function open.
+      let step = await call(params);
+      const deadline = Date.now() + 15 * 60_000;
+
+      while (step.ok && step.body.status === "running") {
+        if (Date.now() > deadline) {
+          setData(null);
+          setFailure({
+            error: "Gave up after 15 minutes",
+            hint: "The query is still running on Dune — try a shorter window.",
+          });
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        step = await call({ ...params, executionId: step.body.executionId });
+      }
+
+      if (!step.ok) {
         setData(null);
-        setFailure(body as Failure);
+        setFailure(step.body as Failure);
         return;
       }
-      setData(body as ScanResponse);
+      setData(step.body as ScanResponse);
     } catch (error) {
       setData(null);
       setFailure({ error: error instanceof Error ? error.message : "Request failed" });

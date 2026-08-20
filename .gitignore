@@ -10,3 +10,4 @@ npm-debug.log*
 .cache/
 next-env.d.ts
 *.tsbuildinfo
+.vercel
