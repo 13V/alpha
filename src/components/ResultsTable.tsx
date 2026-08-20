@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { CHAINS, type ChainId } from "@/lib/chains";
 import {
@@ -11,6 +11,31 @@ import {
   shortAddress,
 } from "@/lib/format";
 import type { WalletRow } from "@/lib/types";
+
+type SortKey =
+  | "rank"
+  | "realizedPnlUsd"
+  | "profitMultiple"
+  | "realizedRoi"
+  | "avgBuyMcap"
+  | "avgSellMcap"
+  | "usdSpent"
+  | "usdReceived";
+
+const COLUMNS: Array<{ key: SortKey; label: string; title?: string }> = [
+  { key: "realizedPnlUsd", label: "Realized PnL" },
+  { key: "profitMultiple", label: "Multiple", title: "Average sell price / average buy price" },
+  {
+    key: "realizedRoi",
+    label: "ROI",
+    title:
+      "Realized profit as a share of the USD this wallet actually spent in the window. Blank when the wallet was already holding when the window opened, because its true cost is unknown.",
+  },
+  { key: "avgBuyMcap", label: "Entry MC" },
+  { key: "avgSellMcap", label: "Exit MC" },
+  { key: "usdSpent", label: "Bought" },
+  { key: "usdReceived", label: "Sold" },
+];
 
 interface Props {
   rows: WalletRow[];
@@ -28,6 +53,35 @@ export default function ResultsTable({
   onToggleAll,
 }: Props) {
   const [copied, setCopied] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("rank");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const sorted = useMemo(() => {
+    const copy = [...rows];
+    copy.sort((a, b) => {
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      // nulls always sink, whichever way the column is pointing
+      if (av == null && bv == null) return a.rank - b.rank;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      const cmp = Number(av) - Number(bv);
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return copy;
+  }, [rows, sortKey, sortDir]);
+
+  function sortBy(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      // rank reads best ascending; every value column reads best biggest-first
+      setSortDir(key === "rank" ? "asc" : "desc");
+    }
+  }
+
+  const arrow = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "");
 
   const all = rows.map((r) => r.wallet);
   const allSelected = all.length > 0 && all.every((w) => selected.has(w));
@@ -55,19 +109,25 @@ export default function ResultsTable({
                 aria-label="Select all"
               />
             </th>
-            <th className="l">#</th>
+            <th className="l sortable" onClick={() => sortBy("rank")} title="Sort by rank">
+              #{arrow("rank")}
+            </th>
             <th className="l">Wallet</th>
-            <th>Realized PnL</th>
-            <th>Multiple</th>
-            <th>ROI</th>
-            <th>Entry MC</th>
-            <th>Exit MC</th>
-            <th>Bought</th>
-            <th>Sold</th>
+            {COLUMNS.map((column) => (
+              <th
+                key={column.key}
+                className="sortable"
+                title={column.title ?? `Sort by ${column.label}`}
+                onClick={() => sortBy(column.key)}
+              >
+                {column.label}
+                {arrow(column.key)}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => {
+          {sorted.map((row) => {
             const sel = selected.has(row.wallet);
             const pnl = row.realizedPnlUsd;
             return (

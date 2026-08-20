@@ -329,8 +329,9 @@ export default function Home() {
         </a>{" "}
         key — it stays in your browser and is only passed through to Dune.
         <br />
-        PnL counts DEX fills only; a ⚠ means the wallet was already holding when the window
-        opened.
+        PnL counts DEX fills only. A ⚠ means the wallet was already holding when the window
+        opened, so its true cost is unknown and its ROI is left blank. Click any column to
+        sort.
       </footer>
     </main>
   );

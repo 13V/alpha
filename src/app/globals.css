@@ -333,6 +333,9 @@ thead th {
 
 thead th.l, tbody td.l { text-align: left; }
 
+thead th.sortable { cursor: pointer; user-select: none; }
+thead th.sortable:hover { color: var(--accent); }
+
 tbody td {
   border-bottom: 1px solid var(--border);
   padding: 0.55rem 0.7rem;

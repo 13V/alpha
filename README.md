@@ -108,6 +108,29 @@ profit_multiple = avg_sell_price / avg_buy_price
 
 Entry and exit market caps are those average prices × circulating supply.
 
+### Multiple and ROI are not the same number
+
+They answer different questions, and only line up in one case:
+
+- **Multiple** is `avg_sell_price / avg_buy_price` — the price gain per token round-tripped.
+- **ROI** is `realized_pnl / usd_spent` — profit against all the capital deployed in the
+  window.
+
+They match when a wallet's whole position opened and closed inside the window. They diverge
+when it did not: a wallet that bought a lot and sold a little shows a big multiple and a
+small ROI, which is correct — most of its capital is still in an open position.
+
+Where ROI genuinely breaks is a wallet that sold **more** than it bought in the window. Then
+`usd_spent` is missing whatever the pre-window tokens cost, and the ratio explodes. Measured
+on one token: a wallet that spent $1 and sold $1,447 reported **144,534% ROI against a 1.17x
+multiple**. Across that token's 100 wallets, the 14 with complete cost basis agreed with the
+multiple to a median of 0.29 percentage points, while the 86 without diverged by a median of
+99.6 points.
+
+So **ROI is returned as null whenever cost basis is incomplete** — the ⚠ rows — and shows as
+`—`. The multiple stays valid either way. Sorting by ROI sinks those rows to the bottom
+rather than letting a fake number top the list.
+
 ### Read this before you trust a row
 
 - **⚠ next to a PnL means the cost basis is incomplete.** That wallet sold more than it

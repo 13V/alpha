@@ -155,7 +155,16 @@ SELECT
     unrealized_pnl_usd,
     realized_pnl_usd + unrealized_pnl_usd                 AS total_pnl_usd,
     avg_sell_price / NULLIF(avg_buy_price, 0)             AS profit_multiple,
-    realized_pnl_usd / NULLIF(usd_spent, 0)               AS realized_roi,
+    -- ROI only means anything when the window contains this wallet's whole
+    -- cost basis. A wallet that sold more than it bought was already holding
+    -- when the window opened, so usd_spent understates what the position
+    -- really cost and the ratio explodes -- 144,534% off $1 spent, against a
+    -- 1.17x multiple, in one measured case. Report nothing rather than a
+    -- number that reads as real. `multiple` stays valid either way.
+    CASE
+        WHEN tokens_sold > tokens_bought * 1.01 THEN NULL
+        ELSE realized_pnl_usd / NULLIF(usd_spent, 0)
+    END                                                   AS realized_roi,
     avg_buy_price,
     avg_sell_price,
     avg_buy_price  * total_supply                         AS avg_buy_mcap,
