@@ -138,16 +138,17 @@ enriched AS (
         GREATEST(m.tokens_bought - m.tokens_sold, 0)                  AS net_position,
         m.usd_spent    / NULLIF(m.tokens_bought, 0)                   AS avg_buy_price,
         m.usd_received / NULLIF(m.tokens_sold,   0)                   AS avg_sell_price,
-        -- Profit on the MATCHED portion only: the tokens whose buy price we
-        -- actually observed. Counting every dollar of proceeds while only
-        -- subtracting the cost of tokens bought in-window treats pre-window
-        -- tokens as free, and reports gains for wallets that sold below their
-        -- own entry. Measured across one token's top 100: $407,503 claimed
-        -- versus $63,039 real, with 34 wallets showing a profit on a sub-1x
-        -- multiple. This way the sign of PnL always agrees with the multiple.
-        (  (m.usd_received / NULLIF(m.tokens_sold,   0))
-         - (m.usd_spent    / NULLIF(m.tokens_bought, 0)) )
-          * LEAST(m.tokens_sold, m.tokens_bought)                     AS realized_pnl_usd,
+        -- Cash accounting: what came out minus what went in. This is the
+        -- convention Solana terminals (Padre, Axiom) use, and it is the only
+        -- one that works here, because Dune's Solana buy-side coverage is
+        -- incomplete. On one measured pump.fun token, recorded sells exceeded
+        -- recorded buys by 1.68x in token terms and only 9 bonding-curve buy
+        -- fills existed at all, so the earliest buyers -- the ones who
+        -- actually made the money -- have no buy row to match against. A
+        -- matched-only formula scores exactly those wallets at zero and hides
+        -- them. Where buys are missing this is an UPPER BOUND, flagged below
+        -- as cost_basis = 'partial'.
+        m.usd_received - m.usd_spent                                  AS realized_pnl_usd,
         GREATEST(m.tokens_bought - m.tokens_sold, 0)
           * (m.market_price
              - COALESCE(m.usd_spent / NULLIF(m.tokens_bought, 0), 0)) AS unrealized_pnl_usd
@@ -194,6 +195,11 @@ SELECT
         WHEN tokens_sold > tokens_bought * 1.01 THEN 'partial'
         ELSE 'full'
     END                                                   AS cost_basis,
+    -- How much of what this wallet sold we can actually see it buy. 1.0 means
+    -- the PnL above is trustworthy; 0 means every token it sold arrived from
+    -- somewhere Dune did not record, so the PnL is an upper bound with no
+    -- cost subtracted at all. Rank with this in view, not just the dollars.
+    LEAST(tokens_bought / NULLIF(tokens_sold, 0), 1.0)    AS buy_coverage,
     buy_count,
     sell_count,
     first_trade,

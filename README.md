@@ -108,7 +108,41 @@ profit_multiple = avg_sell_price / avg_buy_price
 
 Entry and exit market caps are those average prices × circulating supply.
 
-### Profit is counted on the matched portion only
+### Dune's Solana buy-side coverage is incomplete — read this first
+
+On pump.fun tokens, `dex_solana.trades` records far more selling than buying. Measured on
+one token (`6ehEcTMCc85aNF4x9CWx8HuvWGhxQtvKdhKVf2HDpump`):
+
+| project | side | fills | tokens |
+| --- | --- | --- | --- |
+| pumpdotfun | buy | **9** | 813M |
+| pumpswap | buy | 735,183 | 3.53B |
+| pumpswap | sell | 501,780 | **7.39B** |
+
+Token-wide, recorded sells exceed recorded buys by **1.68x** — 3.06 billion tokens sold that
+were never recorded as bought. Nine bonding-curve buy fills exist for a token that ran to a
+$12M market cap. The wallet a Solana terminal ranks first on that token has **1,290 sell
+fills and zero buy fills** in Dune.
+
+Nothing downstream can repair this. A "match each sale to a recorded buy" formula scores
+exactly those wallets at zero and hides the biggest winners entirely — tried, and it dropped
+all ten of a terminal's top wallets out of our top 100.
+
+So PnL is **cash accounting**: `usd_received - usd_spent`, the same convention Padre and
+Axiom use. Against a terminal's published figures for that token, all ten of its top wallets
+now appear in our top 100 with a median error of **8.2%**.
+
+The residual error is the missing buys. Where a wallet's purchases were not recorded, no cost
+is subtracted and its PnL is an **upper bound** — which is why some wallets rank above where a
+terminal puts them. The **Buys seen** column makes this legible per row:
+`tokens_bought / tokens_sold`, capped at 1. 100% means the number is trustworthy; 0% means
+every token it sold arrived from somewhere Dune did not record.
+
+**If you need terminal-grade Solana accuracy, Dune is the wrong source.** It is an analytics
+warehouse, not a Solana-native indexer. Bagtrace is honest about the gap rather than papering
+over it, but it cannot close it.
+
+### Older behaviour: matched-portion accounting
 
 A wallet often sells tokens it bought before the window opened. Their cost is invisible, and
 counting the proceeds anyway treats them as free — which reports a profit for wallets that

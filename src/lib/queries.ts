@@ -112,6 +112,7 @@ export function normalizeRow(row: Record<string, unknown>, index: number): Walle
     valueUsd: num(row.value_usd),
     positionStatus: str(row.position_status),
     costBasis: str(row.cost_basis),
+    buyCoverage: num(row.buy_coverage),
 
     buyCount: num(row.buy_count),
     sellCount: num(row.sell_count),

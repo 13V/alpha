@@ -35,6 +35,7 @@ export interface WalletRow {
   valueUsd: number | null;
   positionStatus: string | null;
   costBasis: string | null;
+  buyCoverage: number | null;
 
   // Activity
   buyCount: number | null;

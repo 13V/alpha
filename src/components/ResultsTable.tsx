@@ -20,7 +20,8 @@ type SortKey =
   | "avgBuyMcap"
   | "avgSellMcap"
   | "usdSpent"
-  | "usdReceived";
+  | "usdReceived"
+  | "buyCoverage";
 
 const COLUMNS: Array<{ key: SortKey; label: string; title?: string }> = [
   { key: "realizedPnlUsd", label: "Realized PnL" },
@@ -35,6 +36,12 @@ const COLUMNS: Array<{ key: SortKey; label: string; title?: string }> = [
   { key: "avgSellMcap", label: "Exit MC" },
   { key: "usdSpent", label: "Bought" },
   { key: "usdReceived", label: "Sold" },
+  {
+    key: "buyCoverage",
+    label: "Buys seen",
+    title:
+      "How much of what this wallet sold we can actually see it buy. 100% means the PnL is trustworthy. 0% means every token it sold arrived from somewhere Dune did not record, so the PnL has no cost subtracted and is an upper bound.",
+  },
 ];
 
 interface Props {
@@ -166,15 +173,6 @@ export default function ResultsTable({
                 </td>
                 <td className={pnl != null && pnl >= 0 ? "up" : "down"}>
                   {formatUsd(pnl)}
-                  {row.costBasis === "partial" && (
-                    <span
-                      className="dim"
-                      title="This wallet sold more than it bought inside the window, so part of its position was bought earlier. Profit is counted only on the tokens whose entry price is visible, so its real total may be higher. Widen the window to capture more of its history."
-                    >
-                      {" "}
-                      ⚠
-                    </span>
-                  )}
                 </td>
                 <td className={(row.profitMultiple ?? 0) >= 1 ? "up" : "down"}>
                   {formatMultiple(row.profitMultiple)}
@@ -186,6 +184,22 @@ export default function ResultsTable({
                 <td>{formatMcap(row.avgSellMcap)}</td>
                 <td className="dim">{formatUsd(row.usdSpent)}</td>
                 <td className="dim">{formatUsd(row.usdReceived)}</td>
+                <td
+                  className={
+                    row.buyCoverage == null || row.buyCoverage < 0.2
+                      ? "down"
+                      : row.buyCoverage < 0.9
+                        ? "dim"
+                        : "up"
+                  }
+                  title={
+                    row.buyCoverage != null && row.buyCoverage < 0.9
+                      ? "Dune has no buy record for the rest of what this wallet sold, so its PnL is an upper bound."
+                      : undefined
+                  }
+                >
+                  {row.buyCoverage == null ? "0%" : `${Math.round(row.buyCoverage * 100)}%`}
+                </td>
               </tr>
             );
           })}

@@ -106,6 +106,7 @@ const CSV_COLUMNS: Array<[keyof WalletRow, string]> = [
   ["valueUsd", "value_usd"],
   ["positionStatus", "position_status"],
   ["costBasis", "cost_basis"],
+  ["buyCoverage", "buy_coverage"],
   ["buyCount", "buy_count"],
   ["sellCount", "sell_count"],
   ["firstTrade", "first_trade"],

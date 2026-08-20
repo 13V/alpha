@@ -329,9 +329,10 @@ export default function Home() {
         </a>{" "}
         key — it stays in your browser and is only passed through to Dune.
         <br />
-        Profit is counted only on tokens whose buy price is inside the window. A ⚠ means the
-        wallet also sold tokens it bought earlier, so its real total may be higher — widen the
-        window to capture more. Click any column to sort.
+        PnL is what came out minus what went in, over DEX fills Dune indexed.{" "}
+        <b>Buys seen</b> is how much of each wallet&rsquo;s sales we can match to a recorded
+        buy — at 0% the PnL has no cost subtracted and is an upper bound. Dune&rsquo;s Solana
+        buy-side coverage is incomplete on pump.fun tokens. Click any column to sort.
       </footer>
     </main>
   );
