@@ -88,19 +88,21 @@ swap_tx AS (
     SELECT DISTINCT tx_id FROM fills
 ),
 
--- One pass over the transfer log, fanned into a credit and a debit leg.
+-- One pass over the transfer log, fanned into a credit and a debit leg. The
+-- counterparty rides along so custodial wallets can be recognised below.
 transfer_legs AS (
     SELECT
         x.wallet,
         x.direction,
         x.tokens,
+        x.counterparty,
         r.block_time
     FROM tokens_solana.transfers r
     LEFT JOIN swap_tx s ON s.tx_id = r.tx_id
     CROSS JOIN UNNEST(ARRAY[
-        ROW(r.to_owner,   'in' , r.amount_display),
-        ROW(r.from_owner, 'out', r.amount_display)
-    ]) AS x(wallet, direction, tokens)
+        ROW(r.to_owner,   'in' , r.amount_display, r.from_owner),
+        ROW(r.from_owner, 'out', r.amount_display, r.to_owner)
+    ]) AS x(wallet, direction, tokens, counterparty)
     WHERE r.token_mint_address = '{{token_address}}'
       AND r.block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
       AND r.block_time >= date_add('day', -{{lookback_days}}, now())
@@ -114,10 +116,11 @@ timeline AS (
     SELECT ts AS block_time, price,
            CAST(NULL AS varchar) AS wallet,
            CAST(NULL AS varchar) AS direction,
-           CAST(NULL AS double)  AS tokens
+           CAST(NULL AS double)  AS tokens,
+           CAST(NULL AS varchar) AS counterparty
     FROM price_minute
     UNION ALL
-    SELECT block_time, CAST(NULL AS double), wallet, direction, CAST(tokens AS double)
+    SELECT block_time, CAST(NULL AS double), wallet, direction, CAST(tokens AS double), counterparty
     FROM transfer_legs
 ),
 
@@ -126,6 +129,7 @@ priced_transfers AS (
         wallet,
         direction,
         tokens,
+        counterparty,
         LAST_VALUE(price) IGNORE NULLS OVER (
             ORDER BY block_time
             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
@@ -138,7 +142,8 @@ per_transfer_wallet AS (
         wallet,
         SUM(CASE WHEN direction = 'in'  THEN tokens ELSE 0 END)                        AS tokens_in,
         SUM(CASE WHEN direction = 'in'  THEN tokens * COALESCE(price_then, 0) ELSE 0 END) AS value_in,
-        SUM(CASE WHEN direction = 'out' THEN tokens ELSE 0 END)                        AS tokens_out
+        SUM(CASE WHEN direction = 'out' THEN tokens ELSE 0 END)                        AS tokens_out,
+        COUNT(DISTINCT counterparty)                                                   AS transfer_peers
     FROM priced_transfers
     WHERE wallet IS NOT NULL
     GROUP BY 1
@@ -180,14 +185,21 @@ per_wallet AS (
 joined AS (
     SELECT
         w.*,
-        COALESCE(t.tokens_in, 0)  AS tokens_in,
-        COALESCE(t.value_in, 0)   AS value_in,
-        COALESCE(t.tokens_out, 0) AS tokens_out,
+        COALESCE(t.tokens_in, 0)      AS tokens_in,
+        COALESCE(t.value_in, 0)       AS value_in,
+        COALESCE(t.tokens_out, 0)     AS tokens_out,
+        COALESCE(t.transfer_peers, 0) AS transfer_peers,
         -- everything the wallet ever got hold of, and what it cost
         w.tokens_bought + COALESCE(t.tokens_in, 0) AS acquired_tokens,
         w.usd_spent     + COALESCE(t.value_in, 0)  AS acquired_cost
     FROM per_wallet w
     LEFT JOIN per_transfer_wallet t ON t.wallet = w.wallet
+    -- Custodial infrastructure is not a trader. An exchange hot wallet on one
+    -- measured token moved 458M tokens in and 458M out across ~4,000 distinct
+    -- counterparties each way; the real top trader had exactly one. Wallets
+    -- exchanging this token with hundreds of distinct peers are deposit
+    -- sweeps, not people, and ranking them buries the actual winners.
+    WHERE COALESCE(t.transfer_peers, 0) <= 200
 ),
 
 marked AS (
@@ -252,6 +264,7 @@ SELECT
     -- how much of what this wallet sold we can account for, buys plus
     -- priced transfers in. 1.0 means the PnL above rests on a real cost.
     LEAST(acquired_tokens / NULLIF(tokens_sold, 0), 1.0)  AS buy_coverage,
+    transfer_peers,
     buy_count,
     sell_count,
     first_trade,

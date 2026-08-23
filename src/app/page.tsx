@@ -9,7 +9,7 @@ import { formatMcap, parseDuneTime } from "@/lib/format";
 import type { ScanResponse } from "@/lib/types";
 
 const EVM_CHOICES: ChainId[] = ["base", "bnb", "ethereum"];
-const WINDOWS = [7, 30, 90, 365];
+const WINDOWS = [7, 30, 90, 365, 1095];
 const DAY_MS = 86_400_000;
 const KEY_STORE = "bagtrace-dune-key";
 
@@ -33,7 +33,12 @@ export default function Home() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(KEY_STORE);
+    let stored: string | null = null;
+    try {
+      stored = window.localStorage.getItem(KEY_STORE);
+    } catch {
+      /* storage blocked — the key just is not remembered */
+    }
     if (stored) {
       setApiKey(stored);
       setKeySaved(true);
@@ -65,7 +70,11 @@ export default function Home() {
     setLoading(true);
     setFailure(null);
     setSelected(new Set());
-    window.localStorage.setItem(KEY_STORE, key);
+    try {
+      window.localStorage.setItem(KEY_STORE, key);
+    } catch {
+      /* storage blocked — key kept in memory for this visit only */
+    }
     setKeySaved(true);
     setEditingKey(false);
 
@@ -78,22 +87,65 @@ export default function Home() {
       lookbackDays: days,
     };
 
-    const call = async (body: Record<string, unknown>) => {
-      const res = await fetch("/api/trace", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      return { ok: res.ok, body: await res.json() };
+    // One call = one short round trip. Network blips, rate limits and platform
+    // error pages (non-JSON bodies) must not kill a multi-minute trace whose
+    // execution is still running fine on Dune, so failures are classified:
+    // transient ones retry with the same executionId, real ones surface.
+    const call = async (
+      body: Record<string, unknown>,
+    ): Promise<
+      | { kind: "ok"; body: { status: string; executionId?: string } & ScanResponse }
+      | { kind: "fail"; failure: Failure }
+      | { kind: "transient"; failure: Failure }
+    > => {
+      let res: Response;
+      try {
+        res = await fetch("/api/trace", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } catch (error) {
+        return {
+          kind: "transient",
+          failure: { error: error instanceof Error ? error.message : "Network error" },
+        };
+      }
+      let parsed: unknown;
+      try {
+        parsed = await res.json();
+      } catch {
+        // a proxy/platform error page, not our route
+        return {
+          kind: res.ok ? "fail" : "transient",
+          failure: { error: `The server returned an unreadable response (${res.status})` },
+        };
+      }
+      if (!res.ok) {
+        const failure = parsed as Failure;
+        const transient = res.status === 429 || res.status === 502 || res.status >= 503;
+        return { kind: transient ? "transient" : "fail", failure };
+      }
+      return { kind: "ok", body: parsed as { status: string; executionId?: string } & ScanResponse };
     };
 
     try {
-      // Start the execution, then poll it. Each request is a short round trip,
-      // so a multi-minute Dune query never holds a serverless function open.
       let step = await call(params);
       const deadline = Date.now() + 15 * 60_000;
+      let executionId: string | undefined;
+      let strikes = 0;
 
-      while (step.ok && step.body.status === "running") {
+      for (;;) {
+        if (step.kind === "ok") {
+          strikes = 0;
+          if (step.body.status !== "running") break;
+          executionId = step.body.executionId ?? executionId;
+        } else if (step.kind === "fail" || !executionId || ++strikes > 5) {
+          // a hard error, or transient trouble before/beyond what retrying covers
+          setData(null);
+          setFailure(step.failure);
+          return;
+        }
         if (Date.now() > deadline) {
           setData(null);
           setFailure({
@@ -102,15 +154,10 @@ export default function Home() {
           });
           return;
         }
-        await new Promise((resolve) => setTimeout(resolve, 2500));
-        step = await call({ ...params, executionId: step.body.executionId });
+        await new Promise((resolve) => setTimeout(resolve, step.kind === "ok" ? 2500 : 5000));
+        step = await call(executionId ? { ...params, executionId } : params);
       }
 
-      if (!step.ok) {
-        setData(null);
-        setFailure(step.body as Failure);
-        return;
-      }
       setData(step.body as ScanResponse);
     } catch (error) {
       setData(null);
@@ -153,7 +200,7 @@ export default function Home() {
     <main className="page">
       <header className="head">
         <h1 className="logo">
-          bag<b>trace</b>
+          Bagtrace<b>.</b>
         </h1>
         <p className="sub">
           Paste a contract. Get the 100 wallets that made the most money on it.
@@ -179,7 +226,7 @@ export default function Home() {
                 Tracing
               </>
             ) : (
-              "Top 100"
+              "Trace"
             )}
           </button>
         </div>
@@ -234,7 +281,7 @@ export default function Home() {
               onClick={() => setDays(n)}
               title="How far back to scan trades. Shorter costs fewer Dune credits."
             >
-              {n < 365 ? `${n}d` : "1y"}
+              {n < 365 ? `${n}d` : n === 365 ? "1y" : "Max"}
             </button>
           ))}
 
@@ -263,29 +310,40 @@ export default function Home() {
 
       {!loading && data && data.rows.length > 0 && (
         <div className="results">
-          <div className="recap">
-            <b>{data.meta.tokenSymbol ?? "Unknown token"}</b>
-            <span className="sep">·</span>
-            {CHAINS[data.meta.chain].label}
+          <dl className="recap">
+            <div>
+              <dt>Token</dt>
+              <dd>{data.meta.tokenSymbol ?? "Unknown"}</dd>
+            </div>
+            <div>
+              <dt>Chain</dt>
+              <dd>{CHAINS[data.meta.chain].label}</dd>
+            </div>
             {data.meta.currentMcap != null && (
-              <>
-                <span className="sep">·</span>
-                {formatMcap(data.meta.currentMcap)} mcap
-              </>
+              <div>
+                <dt>Market cap</dt>
+                <dd>{formatMcap(data.meta.currentMcap)}</dd>
+              </div>
             )}
-            <span className="sep">·</span>
-            {data.meta.rowCount} wallets
-            <span className="sep">·</span>
-            {data.meta.lookbackDays}d
-            <span className="sep">·</span>
-            <span className="dim">
-              {data.meta.cached
-                ? "cached"
-                : data.meta.executionMillis != null
-                  ? `${(data.meta.executionMillis / 1000).toFixed(1)}s`
-                  : ""}
-            </span>
-          </div>
+            <div>
+              <dt>Wallets</dt>
+              <dd>{data.meta.rowCount}</dd>
+            </div>
+            <div>
+              <dt>Window</dt>
+              <dd>{data.meta.lookbackDays}d</dd>
+            </div>
+            <div>
+              <dt>Ran in</dt>
+              <dd className="quiet">
+                {data.meta.cached
+                  ? "cached"
+                  : data.meta.executionMillis != null
+                    ? `${(data.meta.executionMillis / 1000).toFixed(1)}s`
+                    : "—"}
+              </dd>
+            </div>
+          </dl>
 
           {truncated && (
             <div className="msg" style={{ margin: "0 0 0.75rem" }}>

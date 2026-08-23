@@ -36,15 +36,15 @@ export function formatPrice(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value) || value === 0) return "—";
   const abs = Math.abs(value);
   if (abs >= 0.01) return `$${abs.toFixed(4)}`;
-  const exponent = Math.floor(Math.log10(abs));
-  const leadingZeros = Math.abs(exponent) - 1;
+  // Zero count and digits must come from the SAME rounded representation:
+  // deriving zeros from log10 while digits come from toExponential made
+  // values at decade boundaries (0.00999999 -> "1.000e-2") render 10x too
+  // small, because rounding carried the mantissa into the next decade.
+  const [mantissa, exp] = abs.toExponential(3).split("e");
+  const leadingZeros = -Number(exp) - 1;
   // switch to subscript early so one column never mixes both notations
   if (leadingZeros < 2) return `$${abs.toFixed(6)}`;
-  const digits = abs
-    .toExponential(3)
-    .split("e")[0]
-    .replace(".", "")
-    .slice(0, 4);
+  const digits = mantissa.replace(".", "").slice(0, 4);
   return `$0.0${subscript(leadingZeros)}${digits}`;
 }
 

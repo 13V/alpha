@@ -109,6 +109,7 @@ const CSV_COLUMNS: Array<[keyof WalletRow, string]> = [
   ["buyCoverage", "buy_coverage"],
   ["tokensReceived", "tokens_received"],
   ["receivedValueUsd", "received_value_usd"],
+  ["transferPeers", "transfer_peers"],
   ["buyCount", "buy_count"],
   ["sellCount", "sell_count"],
   ["firstTrade", "first_trade"],
@@ -118,7 +119,10 @@ const CSV_COLUMNS: Array<[keyof WalletRow, string]> = [
 
 function csvCell(value: unknown): string {
   if (value === null || value === undefined) return "";
-  const s = String(value);
+  let s = String(value);
+  // Spreadsheet formula-injection guard: a leading =, +, @ or tab/CR on a
+  // non-numeric string gets a quote prefix. Real numbers pass untouched.
+  if (/^[=+@\t\r]/.test(s) && !Number.isFinite(Number(s))) s = `'${s}`;
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
@@ -150,8 +154,9 @@ export function axiomName(row: WalletRow, meta: ScanMeta, nameBy: NameBy): strin
   const tag = tokenTag(meta);
   switch (nameBy) {
     case "multiple":
-      // holders mode has no multiple; fall back rather than emit "— - TAG"
-      return row.profitMultiple != null
+      // no multiple (holders mode) or a zero one (unpriced sells) would emit
+      // "— - TAG"; fall back to rank instead
+      return row.profitMultiple != null && row.profitMultiple > 0
         ? `${formatMultiple(row.profitMultiple)} - ${tag}`
         : `#${row.rank} - ${tag}`;
     case "pnl":

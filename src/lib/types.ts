@@ -38,6 +38,7 @@ export interface WalletRow {
   buyCoverage: number | null;
   tokensReceived: number | null;
   receivedValueUsd: number | null;
+  transferPeers: number | null;
 
   // Activity
   buyCount: number | null;

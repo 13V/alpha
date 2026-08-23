@@ -112,7 +112,14 @@ export function resolveScan(input: ScanRequest): ResolvedScan | ScanFailure {
     1,
     1095,
   );
-  const minUsd = Math.max(0, Number(input.minUsd ?? envInt("DEFAULT_MIN_USD", 50)));
+  // NaN would ride into the cache key and serialize as null in the Dune
+  // payload; an empty string would silently drop the default floor.
+  const rawMinUsd = Number(
+    (input.minUsd === "" ? undefined : input.minUsd) ?? envInt("DEFAULT_MIN_USD", 50),
+  );
+  const minUsd = Number.isFinite(rawMinUsd)
+    ? Math.max(0, rawMinUsd)
+    : envInt("DEFAULT_MIN_USD", 50);
 
   try {
     const plan = planQuery({ chain, mode, token, limit, lookbackDays, minUsd });

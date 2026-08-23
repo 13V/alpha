@@ -166,11 +166,25 @@ Same token, same query, only the window differs:
 
 It costs nothing to avoid: that token took 58.6s over a year and 59.5s over 90 days. Partition
 pruning means the scan is dominated by the token's own rows, not by the span. So the app now
-defaults to a year, and warns when a result's earliest trade sits at the window edge — the
-signature of a token older than the window you picked.
+defaults to a year, offers **Max** (3 years) for older tokens, and warns when a result's
+earliest trade sits at the window edge — the signature of a token older than the window you
+picked. On a token older than the chosen window, partial rows whose PnL disagrees in sign
+with their multiple are expected: the uncovered portion contributes proceeds with no cost,
+which is exactly what the **Buys seen** column discloses.
 
-**This applies to Solana only.** The EVM query still uses plain cash accounting; EVM tokens
-rarely show the pump.fun pattern, but the same treatment would apply via `tokens.transfers`.
+The EVM query applies the identical treatment via `tokens.transfers`, preferring that
+table's own `amount_usd` and falling back to the fill VWAP where it is null.
+
+### Custodial wallets are excluded from the ranking
+
+An exchange hot wallet is not a trader. On one measured token, such a wallet moved 458M
+tokens in and 458M out across **~4,000 distinct transfer counterparties** in each direction —
+while the genuine top trader had exactly one. Perfectly balanced flow across thousands of
+peers is a deposit sweep, and ranking it buries the real winners.
+
+Both traders queries therefore count each wallet's distinct transfer counterparties and drop
+wallets above **200** — orders of magnitude above any individual, orders below custodial
+infrastructure. The count ships in the results as `transfer_peers` so the cut is auditable.
 
 ### Read this before you trust a row
 

@@ -162,8 +162,7 @@ export default function ResultsTable({
                     {shortAddress(row.wallet, 5, 5)}
                   </a>{" "}
                   <button
-                    className="dim"
-                    style={{ background: "none", border: "none", padding: 0 }}
+                    className="copybtn"
                     onClick={() => copyAddress(row.wallet)}
                     title="Copy address"
                     aria-label="Copy address"
@@ -172,6 +171,7 @@ export default function ResultsTable({
                   </button>
                 </td>
                 <td className={pnl != null && pnl >= 0 ? "up" : "down"}>
+                  {pnl != null && pnl > 0 ? "+" : ""}
                   {formatUsd(pnl)}
                 </td>
                 <td className={(row.profitMultiple ?? 0) >= 1 ? "up" : "down"}>
@@ -186,19 +186,23 @@ export default function ResultsTable({
                 <td className="dim">{formatUsd(row.usdReceived)}</td>
                 <td
                   className={
-                    row.buyCoverage == null || row.buyCoverage < 0.2
-                      ? "down"
-                      : row.buyCoverage < 0.9
-                        ? "dim"
-                        : "up"
+                    row.buyCoverage == null
+                      ? "dim"
+                      : row.buyCoverage < 0.2
+                        ? "down"
+                        : row.buyCoverage < 0.9
+                          ? "dim"
+                          : "up"
                   }
                   title={
-                    row.buyCoverage != null && row.buyCoverage < 0.9
-                      ? "Dune has no buy record for the rest of what this wallet sold, so its PnL is an upper bound."
-                      : undefined
+                    row.buyCoverage == null
+                      ? "This wallet has not sold, so there is nothing to cover."
+                      : row.buyCoverage < 0.9
+                        ? "Dune has no cost record for the rest of what this wallet sold, so its PnL is an upper bound."
+                        : undefined
                   }
                 >
-                  {row.buyCoverage == null ? "0%" : `${Math.round(row.buyCoverage * 100)}%`}
+                  {row.buyCoverage == null ? "—" : `${Math.round(row.buyCoverage * 100)}%`}
                 </td>
               </tr>
             );

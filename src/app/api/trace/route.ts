@@ -17,6 +17,28 @@ export const dynamic = "force-dynamic";
  */
 export const maxDuration = 60;
 
+/** Dune execution ids are ULID-like tokens; anything else never reaches the API. */
+const EXECUTION_ID = /^[A-Za-z0-9-]{10,64}$/;
+
+/**
+ * Which cache key each execution we started belongs to. The poll leg may only
+ * populate the shared cache for an execution this process started for exactly
+ * those parameters — otherwise a caller could start a run for token A and poll
+ * it under token B's parameters, poisoning B's cache for everyone. Process-
+ * local like the cache itself; on a different instance the entry is absent and
+ * the poll still serves its caller, it just cannot write the shared cache.
+ */
+const issuedFor = new Map<string, string>();
+const ISSUED_MAX = 500;
+
+function recordIssued(executionId: string, key: string): void {
+  if (issuedFor.size >= ISSUED_MAX) {
+    const oldest = issuedFor.keys().next();
+    if (!oldest.done) issuedFor.delete(oldest.value);
+  }
+  issuedFor.set(executionId, key);
+}
+
 type Payload =
   | ({ status: "done" } & ScanResponse)
   | { status: "running"; executionId: string; state?: string };
@@ -44,7 +66,10 @@ export async function POST(request: Request) {
   const ttl = envInt("CACHE_TTL_SECONDS", 1800);
 
   const client = new DuneClient(apiKey);
-  const executionId = typeof input.executionId === "string" ? input.executionId : "";
+  const executionId = typeof input.executionId === "string" ? input.executionId.trim() : "";
+  if (executionId && !EXECUTION_ID.test(executionId)) {
+    return fail(400, "Malformed execution id");
+  }
 
   try {
     // ---- start leg -------------------------------------------------------
@@ -65,6 +90,7 @@ export async function POST(request: Request) {
         | "medium"
         | "large";
       const started = await client.execute(plan.queryId, plan.parameters, performance);
+      recordIssued(started.execution_id, key);
       return NextResponse.json({
         status: "running",
         executionId: started.execution_id,
@@ -75,10 +101,18 @@ export async function POST(request: Request) {
     // ---- poll leg --------------------------------------------------------
     const status = await client.status(executionId);
 
+    if (status.query_id != null && status.query_id !== plan.queryId) {
+      return fail(400, "That execution does not belong to this query");
+    }
+
     if (status.state === "QUERY_STATE_COMPLETED") {
       const execution = await client.results<Record<string, unknown>>(executionId, { limit });
       const rawRows = execution.result?.rows ?? [];
       const summary = summaryFromRows(rawRows);
+
+      // Only an execution this process started for these exact parameters may
+      // write the shared cache; see issuedFor above.
+      const cacheable = issuedFor.get(executionId) === key;
 
       const payload: ScanResponse = {
         meta: {
@@ -101,7 +135,10 @@ export async function POST(request: Request) {
         rows: rawRows.map(normalizeRow),
       };
 
-      cacheSet(key, payload, ttl);
+      if (cacheable) {
+        cacheSet(key, payload, ttl);
+        issuedFor.delete(executionId);
+      }
       return NextResponse.json({ status: "done", ...payload } satisfies Payload);
     }
 
