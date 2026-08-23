@@ -185,15 +185,6 @@ export default function ResultsTable({
                 <td className="dim">{formatUsd(row.usdSpent)}</td>
                 <td className="dim">{formatUsd(row.usdReceived)}</td>
                 <td
-                  className={
-                    row.buyCoverage == null
-                      ? "dim"
-                      : row.buyCoverage < 0.2
-                        ? "down"
-                        : row.buyCoverage < 0.9
-                          ? "dim"
-                          : "up"
-                  }
                   title={
                     row.buyCoverage == null
                       ? "This wallet has not sold, so there is nothing to cover."
@@ -202,7 +193,24 @@ export default function ResultsTable({
                         : undefined
                   }
                 >
-                  {row.buyCoverage == null ? "—" : `${Math.round(row.buyCoverage * 100)}%`}
+                  {row.buyCoverage == null ? (
+                    <span className="dim">—</span>
+                  ) : (
+                    <span
+                      className="meter"
+                      data-level={
+                        row.buyCoverage >= 0.9 ? "high" : row.buyCoverage < 0.2 ? "low" : "mid"
+                      }
+                    >
+                      <span className="meter-track">
+                        <span
+                          className="meter-fill"
+                          style={{ width: `${Math.max(3, Math.round(row.buyCoverage * 100))}%` }}
+                        />
+                      </span>
+                      <span className="meter-num">{Math.round(row.buyCoverage * 100)}%</span>
+                    </span>
+                  )}
                 </td>
               </tr>
             );

@@ -203,7 +203,7 @@ export default function Home() {
           Bagtrace<b>.</b>
         </h1>
         <p className="sub">
-          Paste a contract. Get the 100 wallets that made the most money on it.
+          Paste a contract address. See the 100 wallets that made the most money on it, what they paid, and what they sold into.
         </p>
       </header>
 
@@ -249,7 +249,7 @@ export default function Home() {
             </>
           ) : (
             <>
-              <span className="keyok">✓ key saved in this browser</span>
+              <span className="keyok">Key saved in this browser</span>
               <button className="mini" onClick={() => setEditingKey(true)}>
                 change
               </button>
@@ -358,21 +358,23 @@ export default function Home() {
             </div>
           )}
 
-          <ExportToolbar
-            rows={exportRows}
-            meta={data.meta}
-            selectedCount={selected.size}
-            onClearSelection={() => setSelected(new Set())}
-          />
-          <ResultsTable
-            rows={data.rows}
-            chain={data.meta.chain}
-            selected={selected}
-            onToggle={toggle}
-            onToggleAll={(wallets, select) =>
-              setSelected(select ? new Set(wallets) : new Set())
-            }
-          />
+          <div className="panel">
+            <ExportToolbar
+              rows={exportRows}
+              meta={data.meta}
+              selectedCount={selected.size}
+              onClearSelection={() => setSelected(new Set())}
+            />
+            <ResultsTable
+              rows={data.rows}
+              chain={data.meta.chain}
+              selected={selected}
+              onToggle={toggle}
+              onToggleAll={(wallets, select) =>
+                setSelected(select ? new Set(wallets) : new Set())
+              }
+            />
+          </div>
         </div>
       )}
 
@@ -415,9 +417,8 @@ export default function Home() {
         key — it stays in your browser and is only passed through to Dune.
         <br />
         Cost basis counts DEX buys <i>and</i> tokens received by transfer, valued at the price
-        when they landed — which is how the winners on pump.fun tokens actually acquire their
-        bags. <b>Buys seen</b> is how much of each wallet&rsquo;s sales that accounts for. Click
-        any column to sort.
+        when they landed. <b>Buys seen</b> is how much of each wallet&rsquo;s sales that
+        accounts for.
       </footer>
     </main>
   );
