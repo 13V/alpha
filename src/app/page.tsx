@@ -10,7 +10,22 @@ import { formatMcap, parseDuneTime } from "@/lib/format";
 import type { ScanResponse } from "@/lib/types";
 
 const EVM_CHOICES: ChainId[] = ["base", "bnb", "ethereum"];
-const WINDOWS = [7, 30, 90, 365, 1095];
+/**
+ * Widening the window costs real money and usually buys nothing. Measured on a
+ * five-day-old token: 7d took 13.5s of engine time, 365d took 97.8s and 1095d
+ * took 411.3s -- for byte-identical rankings, because 99.5% of that scan was
+ * looking for trades that could not exist. Dune bills the engine time, so the
+ * window is the single largest lever on what a search costs.
+ *
+ * Auto walks up this ladder and stops at the first rung that covers the token,
+ * so a young token is one cheap scan and an old one pays the wide scan it
+ * genuinely needs. The rungs are spread so the worst case is four small runs
+ * before the big one, not a slow climb.
+ */
+const LADDER = [7, 90, 365, 1095];
+const AUTO = 0;
+
+const WINDOWS = [AUTO, 7, 30, 90, 365, 1095];
 const DAY_MS = 86_400_000;
 const KEY_STORE = "bagtrace-dune-key";
 const RUN_STORE = "bagtrace-inflight";
@@ -63,7 +78,24 @@ interface Failure {
   hint?: string;
 }
 
-const windowLabel = (n: number) => (n < 365 ? `${n}d` : n === 365 ? "1y" : "Max");
+const windowLabel = (n: number) =>
+  n === AUTO ? "Auto" : n < 365 ? `${n}d` : n === 365 ? "1y" : "Max";
+
+
+/**
+ * Whether a result is bumping against its own window. If the earliest trade
+ * sits within two days of the window opening, there is very likely older
+ * history being cut off -- and a window that opens after a token launched
+ * hides the launch-period buys, which is exactly where the winners are.
+ */
+function looksTruncated(rows: ScanResponse["rows"], lookbackDays: number | null): boolean {
+  if (rows.length === 0 || lookbackDays == null) return false;
+  const times = rows
+    .map((r) => parseDuneTime(r.firstTrade))
+    .filter((t): t is number => t != null);
+  if (times.length === 0) return false;
+  return Math.min(...times) - (Date.now() - lookbackDays * DAY_MS) < 2 * DAY_MS;
+}
 
 export default function Home() {
   const [token, setToken] = useState("");
@@ -71,7 +103,7 @@ export default function Home() {
   const [keySaved, setKeySaved] = useState(false);
   const [editingKey, setEditingKey] = useState(false);
   const [evmChain, setEvmChain] = useState<ChainId>("base");
-  const [days, setDays] = useState(365);
+  const [days, setDays] = useState<number>(AUTO);
 
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -82,6 +114,8 @@ export default function Home() {
   // Inputs behind the rows currently on screen, so a CSV can re-read the same
   // execution for its missing columns instead of running anything again.
   const [lastRun, setLastRun] = useState<Record<string, unknown> | null>(null);
+  /** Which rung of the auto ladder is running, so the wait can say so. */
+  const [probing, setProbing] = useState<number | null>(null);
 
   useEffect(() => {
     let stored: string | null = null;
@@ -184,14 +218,19 @@ export default function Home() {
       };
     };
 
+    /** One window's worth of tracing. Null means the failure is already shown. */
+    const traceOnce = async (
+      lookbackDays: number,
+    ): Promise<{ body: ScanResponse; executionId?: string } | null> => {
+    const runParams = { ...params, lookbackDays };
     // An execution from a previous visit that is still running costs nothing
     // extra to rejoin, and starting a second one for the same inputs would be
     // billed all over again.
-    const signature = runSignature(params);
+    const signature = runSignature(runParams);
     let executionId = readInFlight(signature);
 
-    try {
-      let step = await call(executionId ? { ...params, executionId } : params);
+    {
+      let step = await call(executionId ? { ...runParams, executionId } : runParams);
       const deadline = Date.now() + 15 * 60_000;
       let strikes = 0;
 
@@ -209,7 +248,7 @@ export default function Home() {
           writeInFlight(null);
           setData(null);
           setFailure(step.failure);
-          return;
+          return null;
         }
         if (Date.now() > deadline) {
           setData(null);
@@ -217,19 +256,43 @@ export default function Home() {
             error: "gave up after 15 minutes",
             hint: "the query is still running on dune and is kept, so tracing this again picks it up rather than paying for a second run.",
           });
-          return;
+          return null;
         }
         await new Promise((resolve) => setTimeout(resolve, step.kind === "ok" ? 2500 : 5000));
-        step = await call(executionId ? { ...params, executionId } : params);
+        step = await call(executionId ? { ...runParams, executionId } : runParams);
       }
 
       writeInFlight(null);
-      setLastRun({ ...params, executionId: step.body.executionId ?? executionId });
-      setData(step.body as ScanResponse);
+      return {
+        body: step.body as ScanResponse,
+        executionId: step.body.executionId ?? executionId,
+      };
+    }
+    };
+
+    try {
+      const rungs = days === AUTO ? LADDER : [days];
+      for (let i = 0; i < rungs.length; i++) {
+        const rung = rungs[i];
+        setProbing(days === AUTO ? rung : null);
+        const result = await traceOnce(rung);
+        if (!result) return;
+
+        // Keep climbing only while the data says the window is cutting history
+        // off. Everything below this is the cheap part of the ladder; stopping
+        // early is the whole point.
+        const more = i < rungs.length - 1;
+        if (more && looksTruncated(result.body.rows, result.body.meta.lookbackDays)) continue;
+
+        setLastRun({ ...params, lookbackDays: rung, executionId: result.executionId });
+        setData(result.body);
+        return;
+      }
     } catch (error) {
       setData(null);
       setFailure({ error: error instanceof Error ? error.message : "Request failed" });
     } finally {
+      setProbing(null);
       setLoading(false);
     }
   }
@@ -272,15 +335,10 @@ export default function Home() {
 
   // A window that opens after the token launched hides the launch-period
   // acquisitions, which is exactly where the winners are.
-  const truncated = useMemo(() => {
-    if (!data || data.rows.length === 0 || data.meta.lookbackDays == null) return false;
-    const times = data.rows
-      .map((r) => parseDuneTime(r.firstTrade))
-      .filter((t): t is number => t != null);
-    if (times.length === 0) return false;
-    const windowStart = Date.now() - data.meta.lookbackDays * DAY_MS;
-    return Math.min(...times) - windowStart < 2 * DAY_MS;
-  }, [data]);
+  const truncated = useMemo(
+    () => (data ? looksTruncated(data.rows, data.meta.lookbackDays) : false),
+    [data],
+  );
 
   const exportRows = useMemo(() => {
     if (!data) return [];
@@ -389,8 +447,10 @@ export default function Home() {
           <div className="state">
             <h2>cooking</h2>
             <p>
-              {elapsed}s in. solana takes a few minutes on a token nobody has pulled before —
-              dune has to scan it cold.
+              {elapsed}s in.{" "}
+              {probing != null
+                ? `checking the last ${probing} days first — the narrowest window that covers the token is the cheapest, and usually the same answer.`
+                : "solana takes a few minutes on a token nobody has pulled before — dune has to scan it cold."}
             </p>
             <div className="bar-progress">
               <i />

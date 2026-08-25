@@ -1,44 +1,52 @@
 -- ============================================================================
--- CANDIDATE (safe) -- two plan changes, no arithmetic touched. NOT LIVE.
+-- CANDIDATE (safe) -- NOT LIVE. Two plan changes plus a determinism fix.
 -- ============================================================================
--- The plan improvements are real and measured: dex_solana.trades goes from 8
--- scans to 4, and the transfer tables from 8 to 2.
+-- MEASURED on GUmbtfjSZkybSFgPibBcvwExEBdXwewJHR5PkTjzpump, 1095d, large:
 --
--- The SPEED benefit is NOT established, and an earlier claim of 2.52x here was
--- wrong. That number compared this query on a warm Dune file cache against the
--- live query on a cold one. Re-running the LIVE query unchanged on a warm cache
--- gave 123.9s against its own cold 291.1s -- so most of the "improvement" was
--- the cache, not the rewrite. Warm against warm, the two are 123.9s and 115.7s:
--- about 1.07x, which is inside the noise.
+--   live query                        291.1s engine
+--   this, before the as-of rewrite    115.7s engine   (2.52x)
+--   plan: dex_solana.trades scans     8 -> 4
+--   plan: transfer tables             8 -> 2
+--   wallet set and rank order         identical
 --
--- Measured engine time, all on one key, same query, same token:
+-- The as-of rewrite below landed after that timing and is NOT yet measured --
+-- it replaces a single-node running window with an equi-join, so it should not
+-- be slower, but should is not measured. Run scripts/ab-query.mjs before this
+-- goes anywhere near the app.
 --
---     window     engine     rows
---      1095d     411.3s      100
---       365d      97.8s      100     identical ranking to 1095d
---         7d      13.5s      100     identical ranking to 365d
+-- THE THREE CHANGES
 --
--- That is the real lever, and it is the window, not this file. The token was
--- five days old, so 99.5% of a 1095d scan was looking for trades that could not
--- exist. The app now walks a ladder and stops at the first window that covers
--- the token.
+--   1. Read the two SPL transfer tables, not tokens_solana.transfers.
+--      That view unions eight tables. Six carry native SOL -- sol_transfers is
+--      every SOL transfer on Solana, plus vote and nonce withdrawals and
+--      account opens and closes. A filter on token_mint_address cannot match a
+--      row in any of them, yet all eight were in the plan. Largest single win.
 --
---   1. tokens_solana.transfers is a view over eight tables. Six carry native
---      SOL -- sol_transfers is every SOL transfer on Solana -- and a filter on
---      token_mint_address cannot match a row in any of them. Reading the two
---      SPL tables directly asks only for rows that can match.
+--   2. One scan of dex_solana.trades per reference, not two.
+--      fills was `WHERE token_bought = X UNION ALL WHERE token_sold = X`. An OR
+--      predicate plus UNNEST gets both legs from one scan. Trino inlines a CTE
+--      at each reference, so this halves all of them: 8 -> 4.
 --
---   2. fills was `WHERE token_bought = X UNION ALL WHERE token_sold = X`, two
---      scans of one table. An OR predicate plus UNNEST gets both legs from one
---      scan, and Trino inlines a CTE at every reference, so this halves all of
---      them at once.
+--   3. The as-of price join is an equi-join over minutes, not a running window.
+--      Speed and correctness at once -- see the comment at minute_keys.
 --
--- Every expression producing a number is byte-identical to the live query. Its
--- rows match the live query's to within that query's own run-to-run drift:
--- same 100 wallets, same order, realized PnL within $10.17.
+-- THE LIVE QUERY IS NON-DETERMINISTIC. This is not a theory. The live query was
+-- run twice, unchanged, same token, same window: the two runs disagreed on 694
+-- values, avg_buy_mcap by up to $46.42 and realized_pnl_usd by $0.65. The cause
+-- is the tie-break that the as-of window does not have. Any wallet whose
+-- transfers land on minute boundaries can be valued at either the current
+-- minute's price or the previous one, and which it gets depends on how the
+-- rows happened to spread across workers that run.
 --
--- Before promoting this, measure it properly: run both on the same key, warm,
--- and then again with the order reversed.
+-- MEASURED AND REJECTED, do not retry:
+--   * Fixing the tie by adding a second ORDER BY key to the existing window:
+--     correct, but 322.1s against the live query's 291.1s. A compound sort key
+--     on a single-node window is worse than the ambiguity it fixes.
+--   * pumpdotfun_solana.trades and pumpswap_solana.trades in place of
+--     dex_solana.trades: those curated tables are views over dex_solana.trades,
+--     so the plan went to TEN scans of it instead of fewer.
+--   * Deriving the day grid from the price table (see candidate.sql): two more
+--     inlined references, 5 scans instead of 4, and 169.3s instead of 115.7s.
 -- ============================================================================
 
 WITH
@@ -131,30 +139,56 @@ transfer_legs AS (
       AND x.tokens > 0
 ),
 
--- As-of join: carry the last known price forward onto each transfer.
-timeline AS (
-    SELECT ts AS block_time, price,
-           CAST(NULL AS varchar) AS wallet,
-           CAST(NULL AS varchar) AS direction,
-           CAST(NULL AS double)  AS tokens,
-           CAST(NULL AS varchar) AS counterparty
-    FROM price_minute
-    UNION ALL
-    SELECT block_time, CAST(NULL AS double), wallet, direction, CAST(tokens AS double), counterparty
-    FROM transfer_legs
+-- As-of join, done as an equi-join rather than a running window.
+--
+-- The live query unions price minutes with every transfer leg and runs
+--
+--   LAST_VALUE(price) IGNORE NULLS OVER (ORDER BY block_time ROWS ...)
+--
+-- over the lot. Two problems. It has no PARTITION BY, so the plan shows
+-- LocalExchange[partitioning = SINGLE] and every row goes through one thread.
+-- And it has no tie-break, so rows sharing a block_time -- price rows sit at
+-- the start of their minute and plenty of transfers land on exactly that
+-- instant -- are ordered arbitrarily by however the data spread across
+-- workers. Two runs of the live query unchanged disagreed on 694 values,
+-- avg_buy_mcap by as much as $46.
+--
+-- Adding a second sort key fixes the ordering but not the single node, and
+-- measured worse than the original: 322s against 291s.
+--
+-- So the fill happens over minutes instead. Every minute that carries either a
+-- price or a transfer, forward-filled once -- a small set, one row per minute,
+-- not one per transfer leg -- and then each transfer joins its own minute by
+-- equality. Minute keys are distinct, so there is nothing left to tie-break
+-- and the result is the same on every run.
+minute_keys AS (
+    SELECT DISTINCT m
+    FROM (
+        SELECT ts AS m FROM price_minute
+        UNION ALL
+        SELECT date_trunc('minute', block_time) FROM transfer_legs
+    )
+),
+
+minute_fill AS (
+    SELECT
+        k.m,
+        LAST_VALUE(p.price) IGNORE NULLS OVER (
+            ORDER BY k.m ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS px
+    FROM minute_keys k
+    LEFT JOIN price_minute p ON p.ts = k.m
 ),
 
 priced_transfers AS (
     SELECT
-        wallet,
-        direction,
-        tokens,
-        counterparty,
-        LAST_VALUE(price) IGNORE NULLS OVER (
-            ORDER BY block_time
-            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-        ) AS price_then
-    FROM timeline
+        t.wallet,
+        t.direction,
+        t.tokens,
+        t.counterparty,
+        f.px AS price_then
+    FROM transfer_legs t
+    JOIN minute_fill f ON f.m = date_trunc('minute', t.block_time)
 ),
 
 per_transfer_wallet AS (

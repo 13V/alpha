@@ -38,7 +38,9 @@ order:
 
 1. Don't execute — `DUNE_RESULT_MAX_AGE_MINUTES` reuses a run Dune already has,
    and the client rejoins its own in-flight execution after a reload.
-2. Smaller engine tier. Unset, traders runs `medium`, holders `small`.
+2. The narrowest window that still covers the token — see below. Not the
+   engine tier: medium was measured at >25 minutes against large's 116s on the
+   same query, so a lower rate over far more engine seconds costs more.
 3. A faster query, since the bill tracks engine seconds.
 4. Fewer columns per read. `DISPLAY_COLUMNS` in `src/lib/queries.ts` asks for
    the 15 the screen and the wallet exports use rather than all 35 — 1,500
@@ -68,10 +70,17 @@ find, and prints the two numbers that predict cost.
   minute's price or the previous one depending on how rows spread across
   workers. Two identical runs disagreed on 694 values, `avg_buy_mcap` by $46.
   Fix pending in `dune/top_traders_solana.safe.sql`.
-- **Warm-cache readings lie.** A repeat run of the same token is many times
-  faster than a cold one, and concurrent runs roughly double. Compare engine
-  time, and reverse the order before believing a speedup.
-- Timing measured on `GUmbtfj...` at 1095d: live 291.1s, safe candidate 115.7s.
+- **Warm-cache readings lie, and they fooled this file once already.** The
+  live query, unchanged, ran in 291.1s cold and 123.9s warm. A candidate that
+  ran third on the same token then "measured" 115.7s and was written up as
+  2.52x faster; warm against warm it was 1.07x. Never compare a candidate
+  against a baseline that ran at a different cache temperature. Run both warm,
+  then reverse the order.
+- **The window is the biggest lever on cost, by far.** Same query, same key, on
+  a token five days old: 1095d took 411.3s of engine time, 365d took 97.8s, 7d
+  took 13.5s -- all three returning the same 100 wallets in the same order. The
+  client walks a ladder (`LADDER` in `src/app/page.tsx`) and stops at the first
+  window whose earliest trade is not against the edge.
 
 ### Measured and rejected — do not retry
 

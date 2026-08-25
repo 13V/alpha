@@ -53,19 +53,21 @@ const TIERS: Performance[] = ["small", "medium", "large"];
 /**
  * Which engine to run on.
  *
- * Dune bills an execution for the compute it uses and the time it occupies the
- * engine, and a larger tier costs more per second than a smaller one, so this
- * is the most direct control over spend there is.
+ * A smaller tier costs less per second, which makes "use a smaller tier" sound
+ * like an obvious saving. It is not, because Dune bills the time the query
+ * occupies the engine as well: the traders scan runs in 116s on large and was
+ * still going after 25 minutes on medium, more than twelve times the engine
+ * time for a lower rate, and past the point where the client gives up. So
+ * traders stays on large. Measured, not assumed.
  *
- * Set DUNE_PERFORMANCE and both modes use it. Left unset, the traders scan --
- * the expensive one -- runs on medium, and the holders lookup, which is a
- * balance read that finishes quickly whatever it runs on, runs on small.
- * A value that is not one of the three names is ignored rather than sent.
+ * Holders is a balance lookup that finishes quickly on anything, so it runs on
+ * small. DUNE_PERFORMANCE overrides both; a value that is not one of the three
+ * tier names is ignored rather than sent.
  */
 function enginePerformance(mode: string): Performance {
   const configured = process.env.DUNE_PERFORMANCE as Performance | undefined;
   if (configured && TIERS.includes(configured)) return configured;
-  return mode === "holders" ? "small" : "medium";
+  return mode === "holders" ? "small" : "large";
 }
 
 /** Minutes since an ISO timestamp, or null if it is missing or unparseable. */
