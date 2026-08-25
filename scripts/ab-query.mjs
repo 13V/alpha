@@ -17,9 +17,12 @@ import { duneFetch, loadEnv } from "./dune-env.mjs";
 
 loadEnv(process.cwd());
 
-const [baselinePath, candidatePath, token, days = "365"] = process.argv.slice(2);
-if (!baselinePath || !candidatePath || !token) {
-  console.error("usage: node scripts/ab-query.mjs <baseline.sql> <candidate.sql> <token> [days]");
+const argv = process.argv.slice(2);
+const days = /^\d+$/.test(argv[argv.length - 1]) ? argv.pop() : "365";
+const token = argv.pop();
+const [baselinePath, ...candidatePaths] = argv;
+if (!baselinePath || candidatePaths.length === 0 || !token) {
+  console.error("usage: node scripts/ab-query.mjs <baseline.sql> <candidate.sql>... <token> [days]");
   process.exit(2);
 }
 
@@ -120,30 +123,50 @@ function diff(a, b) {
   return { problems, worst };
 }
 
-const baseline = await runOnce("baseline ", baselinePath);
-const candidate = await runOnce("candidate", candidatePath);
+const baseline = await runOnce("baseline", baselinePath);
+const results = [];
+for (const path of candidatePaths) {
+  const name = path.split("/").pop().replace(/\.sql$/, "");
+  try {
+    results.push({ name, path, run: await runOnce(name, path) });
+  } catch (error) {
+    console.log(`${name}: FAILED — ${error.message}`);
+    results.push({ name, path, run: null, error: error.message });
+  }
+}
 
 console.log("\n=== SPEED ===");
-const speedup = baseline.wall / candidate.wall;
-console.log(`wall   ${(baseline.wall / 1000).toFixed(1)}s -> ${(candidate.wall / 1000).toFixed(1)}s  (${speedup.toFixed(2)}x)`);
-if (baseline.engine != null && candidate.engine != null) {
-  console.log(`engine ${(baseline.engine / 1000).toFixed(1)}s -> ${(candidate.engine / 1000).toFixed(1)}s  (${(baseline.engine / candidate.engine).toFixed(2)}x)`);
+console.log(`baseline  ${(baseline.wall / 1000).toFixed(1)}s wall` +
+  (baseline.engine != null ? `, ${(baseline.engine / 1000).toFixed(1)}s engine` : ""));
+for (const { name, run, error } of results) {
+  if (!run) { console.log(`${name.padEnd(24)} failed: ${error}`); continue; }
+  const wall = `${(run.wall / 1000).toFixed(1)}s (${(baseline.wall / run.wall).toFixed(2)}x)`;
+  const engine = baseline.engine != null && run.engine != null
+    ? `  engine ${(run.engine / 1000).toFixed(1)}s (${(baseline.engine / run.engine).toFixed(2)}x)` : "";
+  console.log(`${name.padEnd(24)} ${wall}${engine}`);
 }
-console.log("NOTE: the second run benefits from the first warming Dune's file cache.");
-console.log("      Re-run with the arguments swapped before believing any speedup.");
+console.log("\nNOTE: each run warms Dune's file cache for the next one, so a later");
+console.log("      candidate is flattered. Re-run with the order reversed before");
+console.log("      believing any speedup, and treat engine time as the real number.");
 
-console.log("\n=== AGREEMENT ===");
-const { problems, worst } = diff(baseline, candidate);
-console.log(`rows: ${baseline.rows.length} baseline / ${candidate.rows.length} candidate`);
-if (worst.column) {
-  console.log(`largest numeric gap: ${worst.column} on ${worst.wallet} — ${worst.a} vs ${worst.b} (${(worst.rel * 100).toExponential(2)}%)`);
+console.log("\n=== AGREEMENT vs BASELINE ===");
+let anyBad = false;
+for (const { name, run } of results) {
+  if (!run) { anyBad = true; continue; }
+  const { problems, worst } = diff(baseline, run);
+  const gap = worst.column
+    ? `worst gap ${worst.column} ${(worst.rel * 100).toExponential(2)}% on ${worst.wallet}`
+    : "no numeric columns compared";
+  if (problems.length === 0) {
+    console.log(`${name.padEnd(24)} MATCHES (${run.rows.length} rows, ${gap})`);
+  } else {
+    anyBad = true;
+    console.log(`${name.padEnd(24)} ${problems.length} disagreement(s) — DO NOT PROMOTE (${gap})`);
+    for (const p of problems.slice(0, 15)) console.log(`    ${p}`);
+    if (problems.length > 15) console.log(`    ...and ${problems.length - 15} more`);
+  }
 }
-if (problems.length === 0) {
-  console.log("IDENTICAL within tolerance — safe to promote.");
-} else {
-  console.log(`${problems.length} disagreement(s) — DO NOT PROMOTE:`);
-  for (const p of problems.slice(0, 40)) console.log(`  ${p}`);
-  if (problems.length > 40) console.log(`  ...and ${problems.length - 40} more`);
-}
-console.log(`\nscratch queries left on dune: ${baseline.queryId}, ${candidate.queryId} — delete them when done.`);
-process.exit(problems.length === 0 ? 0 : 1);
+
+const ids = [baseline.queryId, ...results.filter((r) => r.run).map((r) => r.run.queryId)];
+console.log(`\nscratch queries left on dune: ${ids.join(", ")} — delete them when done.`);
+process.exit(anyBad ? 1 : 0);
