@@ -7,6 +7,7 @@ import HowItWorks from "@/components/HowItWorks";
 import ResultsTable from "@/components/ResultsTable";
 import { CHAINS, detectChain, isEvmAddress, type ChainId } from "@/lib/chains";
 import { formatMcap, parseDuneTime } from "@/lib/format";
+import { pollDelay } from "@/lib/poll";
 import type { ScanResponse } from "@/lib/types";
 
 const EVM_CHOICES: ChainId[] = ["base", "bnb", "ethereum"];
@@ -246,8 +247,9 @@ export default function Home() {
     let executionId = readInFlight(signature);
 
     {
+      const startedAt = Date.now();
       let step = await call(executionId ? { ...runParams, executionId } : runParams);
-      const deadline = Date.now() + 15 * 60_000;
+      const deadline = startedAt + 15 * 60_000;
       let strikes = 0;
 
       for (;;) {
@@ -274,7 +276,9 @@ export default function Home() {
           });
           return null;
         }
-        await new Promise((resolve) => setTimeout(resolve, step.kind === "ok" ? 2500 : 5000));
+        // A failed call backs off on its own schedule; a healthy one ramps.
+        const wait = step.kind === "ok" ? pollDelay(Date.now() - startedAt) : 5000;
+        await new Promise((resolve) => setTimeout(resolve, wait));
         step = await call(executionId ? { ...runParams, executionId } : runParams);
       }
 
