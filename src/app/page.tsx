@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import ExportToolbar from "@/components/ExportToolbar";
+import HowItWorks from "@/components/HowItWorks";
 import ResultsTable from "@/components/ResultsTable";
 import { CHAINS, detectChain, isEvmAddress, type ChainId } from "@/lib/chains";
 import { formatMcap, parseDuneTime } from "@/lib/format";
@@ -33,6 +34,7 @@ export default function Home() {
   const [failure, setFailure] = useState<Failure | null>(null);
   const [data, setData] = useState<ScanResponse | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
     let stored: string | null = null;
@@ -261,6 +263,10 @@ export default function Home() {
 
         <span className="push" />
 
+        <button className="helpbtn" onClick={() => setShowHelp(true)}>
+          how it works
+        </button>
+
         {showKeyInput ? (
           <>
             <input
@@ -411,6 +417,8 @@ export default function Home() {
           Dune
         </a>
       </footer>
+
+      {showHelp && <HowItWorks onClose={() => setShowHelp(false)} />}
     </div>
   );
 }

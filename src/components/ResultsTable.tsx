@@ -170,7 +170,10 @@ export default function ResultsTable({
                     {copied === row.wallet ? "✓" : "⧉"}
                   </button>
                 </td>
-                <td className={pnl != null && pnl >= 0 ? "up" : "down"}>
+                <td
+                  className={`pnl ${pnl != null && pnl >= 0 ? "up" : "down"}`}
+                  data-sign={pnl == null ? "none" : pnl >= 0 ? "pos" : "neg"}
+                >
                   {pnl != null && pnl > 0 ? "+" : ""}
                   {formatUsd(pnl)}
                 </td>
