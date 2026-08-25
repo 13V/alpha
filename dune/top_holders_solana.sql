@@ -1,5 +1,5 @@
 -- ============================================================================
--- Bagtrace — Top holders of a Solana SPL token, ranked by current balance.
+-- Who Printed — Top holders of a Solana SPL token, ranked by current balance.
 -- ============================================================================
 -- Source: solana_utils.latest_balances (the canonical per-account snapshot).
 --

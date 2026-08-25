@@ -1,5 +1,5 @@
 -- ============================================================================
--- Bagtrace — Top traders of an EVM token, ranked by realized PnL.
+-- Who Printed — Top traders of an EVM token, ranked by realized PnL.
 -- Base, BNB Chain, Ethereum, Arbitrum, Optimism, Polygon.
 -- ============================================================================
 -- Source: dex.trades         every decoded EVM DEX swap

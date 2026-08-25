@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Who Printed">
+  <!--
+    A sheet coming out of a printer slot. Drawn as geometry rather than traced
+    from a raster so it stays crisp at 16px, where the whole thing is a black
+    bar with a white rectangle above it and nothing else survives.
+
+    Proportions are set for that size: the stroke is 4 units of 64, which lands
+    on exactly 1px at 16x16, and the sheet's bottom sits behind the slot so it
+    reads as emerging rather than as a square parked on a box.
+  -->
+  <rect width="64" height="64" fill="#9FD8F2"/>
+
+  <!-- the sheet, taller than wide so it reads as paper -->
+  <rect x="19" y="8" width="26" height="36" fill="#FFFFFF" stroke="#16161A" stroke-width="4"/>
+
+  <!-- the slot, drawn over the sheet's bottom edge -->
+  <rect x="7" y="38" width="50" height="16" fill="#16161A"/>
+  <rect x="13" y="44" width="38" height="4" fill="#9FD8F2"/>
+</svg>

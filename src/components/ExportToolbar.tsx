@@ -26,6 +26,8 @@ interface Props {
   meta: ScanMeta;
   selectedCount: number;
   onClearSelection: () => void;
+  /** Fetches the columns a trace does not read by default. Null if it cannot. */
+  onFullRows?: () => Promise<WalletRow[] | null>;
 }
 
 export default function ExportToolbar({
@@ -33,12 +35,35 @@ export default function ExportToolbar({
   meta,
   selectedCount,
   onClearSelection,
+  onFullRows,
 }: Props) {
   const [copied, setCopied] = useState<ExportFormat | null>(null);
   const [axiom, setAxiom] = useState<AxiomOptions>(AXIOM_DEFAULTS);
 
+  const [widening, setWidening] = useState(false);
+
+  /**
+   * Rows for this export. The wallet exports need only what is already here;
+   * a CSV needs the columns a trace does not pay to read, so those are fetched
+   * once and matched back by wallet. If that fails the export still happens,
+   * just without the columns it could not get.
+   */
+  async function rowsFor(format: ExportFormat): Promise<WalletRow[]> {
+    if (format !== "csv" && format !== "json") return rows;
+    if (!onFullRows) return rows;
+    setWidening(true);
+    try {
+      const wide = await onFullRows();
+      if (!wide) return rows;
+      const byWallet = new Map(wide.map((r) => [r.wallet, r]));
+      return rows.map((r) => ({ ...r, ...(byWallet.get(r.wallet) ?? {}) }));
+    } finally {
+      setWidening(false);
+    }
+  }
+
   async function copy(format: ExportFormat) {
-    const content = buildExport(format, rows, meta, axiom);
+    const content = buildExport(format, await rowsFor(format), meta, axiom);
     try {
       await navigator.clipboard.writeText(content);
       setCopied(format);
@@ -57,14 +82,28 @@ export default function ExportToolbar({
         {selectedCount > 0 ? " picked" : " wallets"}
       </span>
 
-      <button className="chip" data-primary onClick={() => copy("axiom")}>
+      <button
+        className="chip"
+        data-primary
+        title="Tracked-wallet JSON — paste straight into Axiom's import"
+        onClick={() => copy("axiom")}
+      >
         {copied === "axiom" ? "copied ✓" : "Copy for Axiom"}
       </button>
-      <button className="chip" onClick={() => copy("addresses")}>
-        {copied === "addresses" ? "copied ✓" : "Addresses"}
+      <button
+        className="chip"
+        title="One wallet per line — paste into Terminal, Photon or any tracker"
+        onClick={() => copy("addresses")}
+      >
+        {copied === "addresses" ? "copied ✓" : "Terminal / Photon"}
       </button>
-      <button className="chip" onClick={() => copy("csv")}>
-        {copied === "csv" ? "copied ✓" : "CSV"}
+      <button
+        className="chip"
+        title="Every column, for your own spreadsheet"
+        disabled={widening}
+        onClick={() => copy("csv")}
+      >
+        {copied === "csv" ? "copied ✓" : widening ? "fetching…" : "CSV"}
       </button>
       <button
         className="chip"

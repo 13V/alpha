@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Bagtrace from the terminal — no web server needed.
+ * Who Printed, from the terminal — no web server needed.
  *
  *   node scripts/trace.mjs <contract-address> [options]
  *

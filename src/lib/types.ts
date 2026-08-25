@@ -64,6 +64,11 @@ export interface ScanMeta {
   executionMillis: number | null;
   fetchedAt: string;
   cached: boolean;
+  /**
+   * When the rows came off a run Dune had already stored rather than one we
+   * started, how long ago that run finished. Null when we ran it ourselves.
+   */
+  resultAgeMinutes: number | null;
 }
 
 export interface ScanResponse {

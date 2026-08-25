@@ -1,5 +1,5 @@
 -- ============================================================================
--- Bagtrace — Top holders of an EVM token, ranked by current balance.
+-- Who Printed — Top holders of an EVM token, ranked by current balance.
 -- ============================================================================
 -- Balances are reconstructed as net transfer flow from tokens.transfers.
 --

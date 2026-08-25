@@ -1,76 +1,95 @@
 -- ============================================================================
--- Who Printed — Top traders of a Solana SPL token, ranked by realized PnL.
+-- CANDIDATE (safe) -- NOT LIVE. Two plan changes plus a determinism fix.
 -- ============================================================================
--- Source: dex_solana.trades       every decoded Solana DEX/AMM swap
---         tokens_solana.transfers SPL movements, for tokens that arrived
---                                 without a swap
---         solana_utils.latest_balances  circulating supply
+-- MEASURED on GUmbtfjSZkybSFgPibBcvwExEBdXwewJHR5PkTjzpump, 1095d, large:
 --
--- Parameters:
---   token_address  text    SPL mint address
---   wallet_limit   number  how many wallets to return
---   lookback_days  number  how far back to scan (cost control)
---   min_usd        number  drop wallets below this traded volume
+--   live query                        291.1s engine
+--   this, before the as-of rewrite    115.7s engine   (2.52x)
+--   plan: dex_solana.trades scans     8 -> 4
+--   plan: transfer tables             8 -> 2
+--   wallet set and rank order         identical
 --
--- WHY TRANSFERS MATTER
--- On pump.fun tokens most of the real winners never appear as buyers. Measured
--- on 6ehEcTMCc85aNF4x9CWx8HuvWGhxQtvKdhKVf2HDpump, recorded sells exceeded
--- recorded buys by 1.68x token-wide, and the wallet a Solana terminal ranks
--- first had 1,290 sell fills and zero buy fills across every trade table Dune
--- has, including the raw bonding-curve event log. It had not bought at all: it
--- RECEIVED 21,865,947 tokens in one transfer, then sold them.
+-- The as-of rewrite below landed after that timing and is NOT yet measured --
+-- it replaces a single-node running window with an equi-join, so it should not
+-- be slower, but should is not measured. Run scripts/ab-query.mjs before this
+-- goes anywhere near the app.
 --
--- Treating those tokens as free costs nothing and reports every dollar of
--- proceeds as profit. Matching sales only against recorded buys scores such a
--- wallet at exactly zero and hides it. Both are wrong.
+-- THE THREE CHANGES
 --
--- So tokens that arrive by transfer are valued at the market price at the
--- moment they land, and that value becomes cost basis. For the wallet above
--- this yields $658 of basis against a terminal's independently published
--- $658.0 -- the same method, reproduced on Dune.
+--   1. Read the two SPL transfer tables, not tokens_solana.transfers.
+--      That view unions eight tables. Six carry native SOL -- sol_transfers is
+--      every SOL transfer on Solana, plus vote and nonce withdrawals and
+--      account opens and closes. A filter on token_mint_address cannot match a
+--      row in any of them, yet all eight were in the plan. Largest single win.
 --
--- Transfers that are the token leg of a swap are excluded by tx id, otherwise
--- every DEX buy would be counted twice. Transfers OUT reduce the remaining
--- position but are never counted as proceeds: moving tokens is not selling.
+--   2. One scan of dex_solana.trades per reference, not two.
+--      fills was `WHERE token_bought = X UNION ALL WHERE token_sold = X`. An OR
+--      predicate plus UNNEST gets both legs from one scan. Trino inlines a CTE
+--      at each reference, so this halves all of them: 8 -> 4.
+--
+--   3. The as-of price join is an equi-join over minutes, not a running window.
+--      Speed and correctness at once -- see the comment at minute_keys.
+--
+-- THE LIVE QUERY IS NON-DETERMINISTIC. This is not a theory. The live query was
+-- run twice, unchanged, same token, same window: the two runs disagreed on 694
+-- values, avg_buy_mcap by up to $46.42 and realized_pnl_usd by $0.65. The cause
+-- is the tie-break that the as-of window does not have. Any wallet whose
+-- transfers land on minute boundaries can be valued at either the current
+-- minute's price or the previous one, and which it gets depends on how the
+-- rows happened to spread across workers that run.
+--
+-- MEASURED AND REJECTED, do not retry:
+--   * Fixing the tie by adding a second ORDER BY key to the existing window:
+--     correct, but 322.1s against the live query's 291.1s. A compound sort key
+--     on a single-node window is worse than the ambiguity it fixes.
+--   * pumpdotfun_solana.trades and pumpswap_solana.trades in place of
+--     dex_solana.trades: those curated tables are views over dex_solana.trades,
+--     so the plan went to TEN scans of it instead of fewer.
+--   * Deriving the day grid from the price table (see candidate.sql): two more
+--     inlined references, 5 scans instead of 4, and 169.3s instead of 115.7s.
 -- ============================================================================
 
 WITH
+dex_scan AS (
+    SELECT
+        trader_id AS wallet,
+        block_time,
+        tx_id,
+        COALESCE(amount_usd, 0) AS usd_amount,
+        token_bought_mint_address,
+        token_sold_mint_address,
+        token_bought_amount,
+        token_sold_amount
+    FROM dex_solana.trades
+    WHERE block_month >= CAST(date_trunc('month', date_add('day', -{{lookback_days}}, now())) AS date)
+      AND block_time  >= date_add('day', -{{lookback_days}}, now())
+      AND (token_bought_mint_address = '{{token_address}}'
+        OR token_sold_mint_address   = '{{token_address}}')
+),
+
 fills AS (
     SELECT
-        trader_id                                                   AS wallet,
-        block_time,
-        tx_id,
-        'buy'                                                       AS side,
-        token_bought_amount                                         AS token_amount,
-        COALESCE(amount_usd, 0)                                     AS usd_amount,
-        CASE
-            WHEN token_sold_mint_address = 'So11111111111111111111111111111111111111112'
-            THEN token_sold_amount ELSE 0
-        END                                                         AS sol_amount
-    FROM dex_solana.trades
-    WHERE token_bought_mint_address = '{{token_address}}'
-      AND block_month >= CAST(date_trunc('month', date_add('day', -{{lookback_days}}, now())) AS date)
-      AND block_time  >= date_add('day', -{{lookback_days}}, now())
-      AND token_bought_amount > 0
-
-    UNION ALL
-
-    SELECT
-        trader_id,
-        block_time,
-        tx_id,
-        'sell',
-        token_sold_amount,
-        COALESCE(amount_usd, 0),
-        CASE
-            WHEN token_bought_mint_address = 'So11111111111111111111111111111111111111112'
-            THEN token_bought_amount ELSE 0
-        END
-    FROM dex_solana.trades
-    WHERE token_sold_mint_address = '{{token_address}}'
-      AND block_month >= CAST(date_trunc('month', date_add('day', -{{lookback_days}}, now())) AS date)
-      AND block_time  >= date_add('day', -{{lookback_days}}, now())
-      AND token_sold_amount > 0
+        d.wallet,
+        d.block_time,
+        d.tx_id,
+        x.side,
+        x.token_amount,
+        d.usd_amount,
+        x.sol_amount
+    FROM dex_scan d
+    CROSS JOIN UNNEST(ARRAY[
+        ROW('buy',
+            CASE WHEN d.token_bought_mint_address = '{{token_address}}'
+                 THEN d.token_bought_amount ELSE 0 END,
+            CASE WHEN d.token_sold_mint_address = 'So11111111111111111111111111111111111111112'
+                 THEN d.token_sold_amount ELSE 0 END),
+        ROW('sell',
+            CASE WHEN d.token_sold_mint_address = '{{token_address}}'
+                 THEN d.token_sold_amount ELSE 0 END,
+            CASE WHEN d.token_bought_mint_address = 'So11111111111111111111111111111111111111112'
+                 THEN d.token_bought_amount ELSE 0 END)
+    ]) AS x(side, token_amount, sol_amount)
+    WHERE x.token_amount > 0
 ),
 
 -- Per-minute VWAP from the fills themselves. This is the price used to value
@@ -97,44 +116,79 @@ transfer_legs AS (
         x.tokens,
         x.counterparty,
         r.block_time
-    FROM tokens_solana.transfers r
+    FROM (
+        SELECT block_time, tx_id, amount_display, from_owner, to_owner
+        FROM tokens_solana.spl_token_transfers
+        WHERE token_mint_address = '{{token_address}}'
+          AND block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
+          AND block_time >= date_add('day', -{{lookback_days}}, now())
+        UNION ALL
+        SELECT block_time, tx_id, amount_display, from_owner, to_owner
+        FROM tokens_solana.spl_token_2022_transfers
+        WHERE token_mint_address = '{{token_address}}'
+          AND block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
+          AND block_time >= date_add('day', -{{lookback_days}}, now())
+    ) r
     LEFT JOIN swap_tx s ON s.tx_id = r.tx_id
     CROSS JOIN UNNEST(ARRAY[
         ROW(r.to_owner,   'in' , r.amount_display, r.from_owner),
         ROW(r.from_owner, 'out', r.amount_display, r.to_owner)
     ]) AS x(wallet, direction, tokens, counterparty)
-    WHERE r.token_mint_address = '{{token_address}}'
-      AND r.block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
-      AND r.block_time >= date_add('day', -{{lookback_days}}, now())
-      AND s.tx_id IS NULL          -- not the token leg of a swap
+    WHERE s.tx_id IS NULL          -- not the token leg of a swap
       AND x.wallet IS NOT NULL
       AND x.tokens > 0
 ),
 
--- As-of join: carry the last known price forward onto each transfer.
-timeline AS (
-    SELECT ts AS block_time, price,
-           CAST(NULL AS varchar) AS wallet,
-           CAST(NULL AS varchar) AS direction,
-           CAST(NULL AS double)  AS tokens,
-           CAST(NULL AS varchar) AS counterparty
-    FROM price_minute
-    UNION ALL
-    SELECT block_time, CAST(NULL AS double), wallet, direction, CAST(tokens AS double), counterparty
-    FROM transfer_legs
+-- As-of join, done as an equi-join rather than a running window.
+--
+-- The live query unions price minutes with every transfer leg and runs
+--
+--   LAST_VALUE(price) IGNORE NULLS OVER (ORDER BY block_time ROWS ...)
+--
+-- over the lot. Two problems. It has no PARTITION BY, so the plan shows
+-- LocalExchange[partitioning = SINGLE] and every row goes through one thread.
+-- And it has no tie-break, so rows sharing a block_time -- price rows sit at
+-- the start of their minute and plenty of transfers land on exactly that
+-- instant -- are ordered arbitrarily by however the data spread across
+-- workers. Two runs of the live query unchanged disagreed on 694 values,
+-- avg_buy_mcap by as much as $46.
+--
+-- Adding a second sort key fixes the ordering but not the single node, and
+-- measured worse than the original: 322s against 291s.
+--
+-- So the fill happens over minutes instead. Every minute that carries either a
+-- price or a transfer, forward-filled once -- a small set, one row per minute,
+-- not one per transfer leg -- and then each transfer joins its own minute by
+-- equality. Minute keys are distinct, so there is nothing left to tie-break
+-- and the result is the same on every run.
+minute_keys AS (
+    SELECT DISTINCT m
+    FROM (
+        SELECT ts AS m FROM price_minute
+        UNION ALL
+        SELECT date_trunc('minute', block_time) FROM transfer_legs
+    )
+),
+
+minute_fill AS (
+    SELECT
+        k.m,
+        LAST_VALUE(p.price) IGNORE NULLS OVER (
+            ORDER BY k.m ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS px
+    FROM minute_keys k
+    LEFT JOIN price_minute p ON p.ts = k.m
 ),
 
 priced_transfers AS (
     SELECT
-        wallet,
-        direction,
-        tokens,
-        counterparty,
-        LAST_VALUE(price) IGNORE NULLS OVER (
-            ORDER BY block_time
-            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-        ) AS price_then
-    FROM timeline
+        t.wallet,
+        t.direction,
+        t.tokens,
+        t.counterparty,
+        f.px AS price_then
+    FROM transfer_legs t
+    JOIN minute_fill f ON f.m = date_trunc('minute', t.block_time)
 ),
 
 per_transfer_wallet AS (

@@ -1,76 +1,87 @@
 -- ============================================================================
--- Who Printed — Top traders of a Solana SPL token, ranked by realized PnL.
+-- CANDIDATE (safe) -- two plan changes, no arithmetic touched. NOT LIVE.
 -- ============================================================================
--- Source: dex_solana.trades       every decoded Solana DEX/AMM swap
---         tokens_solana.transfers SPL movements, for tokens that arrived
---                                 without a swap
---         solana_utils.latest_balances  circulating supply
+-- The plan improvements are real and measured: dex_solana.trades goes from 8
+-- scans to 4, and the transfer tables from 8 to 2.
 --
--- Parameters:
---   token_address  text    SPL mint address
---   wallet_limit   number  how many wallets to return
---   lookback_days  number  how far back to scan (cost control)
---   min_usd        number  drop wallets below this traded volume
+-- The SPEED benefit is NOT established, and an earlier claim of 2.52x here was
+-- wrong. That number compared this query on a warm Dune file cache against the
+-- live query on a cold one. Re-running the LIVE query unchanged on a warm cache
+-- gave 123.9s against its own cold 291.1s -- so most of the "improvement" was
+-- the cache, not the rewrite. Warm against warm, the two are 123.9s and 115.7s:
+-- about 1.07x, which is inside the noise.
 --
--- WHY TRANSFERS MATTER
--- On pump.fun tokens most of the real winners never appear as buyers. Measured
--- on 6ehEcTMCc85aNF4x9CWx8HuvWGhxQtvKdhKVf2HDpump, recorded sells exceeded
--- recorded buys by 1.68x token-wide, and the wallet a Solana terminal ranks
--- first had 1,290 sell fills and zero buy fills across every trade table Dune
--- has, including the raw bonding-curve event log. It had not bought at all: it
--- RECEIVED 21,865,947 tokens in one transfer, then sold them.
+-- Measured engine time, all on one key, same query, same token:
 --
--- Treating those tokens as free costs nothing and reports every dollar of
--- proceeds as profit. Matching sales only against recorded buys scores such a
--- wallet at exactly zero and hides it. Both are wrong.
+--     window     engine     rows
+--      1095d     411.3s      100
+--       365d      97.8s      100     identical ranking to 1095d
+--         7d      13.5s      100     identical ranking to 365d
 --
--- So tokens that arrive by transfer are valued at the market price at the
--- moment they land, and that value becomes cost basis. For the wallet above
--- this yields $658 of basis against a terminal's independently published
--- $658.0 -- the same method, reproduced on Dune.
+-- That is the real lever, and it is the window, not this file. The token was
+-- five days old, so 99.5% of a 1095d scan was looking for trades that could not
+-- exist. The app now walks a ladder and stops at the first window that covers
+-- the token.
 --
--- Transfers that are the token leg of a swap are excluded by tx id, otherwise
--- every DEX buy would be counted twice. Transfers OUT reduce the remaining
--- position but are never counted as proceeds: moving tokens is not selling.
+--   1. tokens_solana.transfers is a view over eight tables. Six carry native
+--      SOL -- sol_transfers is every SOL transfer on Solana -- and a filter on
+--      token_mint_address cannot match a row in any of them. Reading the two
+--      SPL tables directly asks only for rows that can match.
+--
+--   2. fills was `WHERE token_bought = X UNION ALL WHERE token_sold = X`, two
+--      scans of one table. An OR predicate plus UNNEST gets both legs from one
+--      scan, and Trino inlines a CTE at every reference, so this halves all of
+--      them at once.
+--
+-- Every expression producing a number is byte-identical to the live query. Its
+-- rows match the live query's to within that query's own run-to-run drift:
+-- same 100 wallets, same order, realized PnL within $10.17.
+--
+-- Before promoting this, measure it properly: run both on the same key, warm,
+-- and then again with the order reversed.
 -- ============================================================================
 
 WITH
+dex_scan AS (
+    SELECT
+        trader_id AS wallet,
+        block_time,
+        tx_id,
+        COALESCE(amount_usd, 0) AS usd_amount,
+        token_bought_mint_address,
+        token_sold_mint_address,
+        token_bought_amount,
+        token_sold_amount
+    FROM dex_solana.trades
+    WHERE block_month >= CAST(date_trunc('month', date_add('day', -{{lookback_days}}, now())) AS date)
+      AND block_time  >= date_add('day', -{{lookback_days}}, now())
+      AND (token_bought_mint_address = '{{token_address}}'
+        OR token_sold_mint_address   = '{{token_address}}')
+),
+
 fills AS (
     SELECT
-        trader_id                                                   AS wallet,
-        block_time,
-        tx_id,
-        'buy'                                                       AS side,
-        token_bought_amount                                         AS token_amount,
-        COALESCE(amount_usd, 0)                                     AS usd_amount,
-        CASE
-            WHEN token_sold_mint_address = 'So11111111111111111111111111111111111111112'
-            THEN token_sold_amount ELSE 0
-        END                                                         AS sol_amount
-    FROM dex_solana.trades
-    WHERE token_bought_mint_address = '{{token_address}}'
-      AND block_month >= CAST(date_trunc('month', date_add('day', -{{lookback_days}}, now())) AS date)
-      AND block_time  >= date_add('day', -{{lookback_days}}, now())
-      AND token_bought_amount > 0
-
-    UNION ALL
-
-    SELECT
-        trader_id,
-        block_time,
-        tx_id,
-        'sell',
-        token_sold_amount,
-        COALESCE(amount_usd, 0),
-        CASE
-            WHEN token_bought_mint_address = 'So11111111111111111111111111111111111111112'
-            THEN token_bought_amount ELSE 0
-        END
-    FROM dex_solana.trades
-    WHERE token_sold_mint_address = '{{token_address}}'
-      AND block_month >= CAST(date_trunc('month', date_add('day', -{{lookback_days}}, now())) AS date)
-      AND block_time  >= date_add('day', -{{lookback_days}}, now())
-      AND token_sold_amount > 0
+        d.wallet,
+        d.block_time,
+        d.tx_id,
+        x.side,
+        x.token_amount,
+        d.usd_amount,
+        x.sol_amount
+    FROM dex_scan d
+    CROSS JOIN UNNEST(ARRAY[
+        ROW('buy',
+            CASE WHEN d.token_bought_mint_address = '{{token_address}}'
+                 THEN d.token_bought_amount ELSE 0 END,
+            CASE WHEN d.token_sold_mint_address = 'So11111111111111111111111111111111111111112'
+                 THEN d.token_sold_amount ELSE 0 END),
+        ROW('sell',
+            CASE WHEN d.token_sold_mint_address = '{{token_address}}'
+                 THEN d.token_sold_amount ELSE 0 END,
+            CASE WHEN d.token_bought_mint_address = 'So11111111111111111111111111111111111111112'
+                 THEN d.token_bought_amount ELSE 0 END)
+    ]) AS x(side, token_amount, sol_amount)
+    WHERE x.token_amount > 0
 ),
 
 -- Per-minute VWAP from the fills themselves. This is the price used to value
@@ -97,16 +108,25 @@ transfer_legs AS (
         x.tokens,
         x.counterparty,
         r.block_time
-    FROM tokens_solana.transfers r
+    FROM (
+        SELECT block_time, tx_id, amount_display, from_owner, to_owner
+        FROM tokens_solana.spl_token_transfers
+        WHERE token_mint_address = '{{token_address}}'
+          AND block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
+          AND block_time >= date_add('day', -{{lookback_days}}, now())
+        UNION ALL
+        SELECT block_time, tx_id, amount_display, from_owner, to_owner
+        FROM tokens_solana.spl_token_2022_transfers
+        WHERE token_mint_address = '{{token_address}}'
+          AND block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
+          AND block_time >= date_add('day', -{{lookback_days}}, now())
+    ) r
     LEFT JOIN swap_tx s ON s.tx_id = r.tx_id
     CROSS JOIN UNNEST(ARRAY[
         ROW(r.to_owner,   'in' , r.amount_display, r.from_owner),
         ROW(r.from_owner, 'out', r.amount_display, r.to_owner)
     ]) AS x(wallet, direction, tokens, counterparty)
-    WHERE r.token_mint_address = '{{token_address}}'
-      AND r.block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
-      AND r.block_time >= date_add('day', -{{lookback_days}}, now())
-      AND s.tx_id IS NULL          -- not the token leg of a swap
+    WHERE s.tx_id IS NULL          -- not the token leg of a swap
       AND x.wallet IS NOT NULL
       AND x.tokens > 0
 ),

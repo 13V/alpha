@@ -1,37 +1,8 @@
 -- ============================================================================
--- Who Printed — Top traders of a Solana SPL token, ranked by realized PnL.
--- ============================================================================
--- Source: dex_solana.trades       every decoded Solana DEX/AMM swap
---         tokens_solana.transfers SPL movements, for tokens that arrived
---                                 without a swap
---         solana_utils.latest_balances  circulating supply
---
--- Parameters:
---   token_address  text    SPL mint address
---   wallet_limit   number  how many wallets to return
---   lookback_days  number  how far back to scan (cost control)
---   min_usd        number  drop wallets below this traded volume
---
--- WHY TRANSFERS MATTER
--- On pump.fun tokens most of the real winners never appear as buyers. Measured
--- on 6ehEcTMCc85aNF4x9CWx8HuvWGhxQtvKdhKVf2HDpump, recorded sells exceeded
--- recorded buys by 1.68x token-wide, and the wallet a Solana terminal ranks
--- first had 1,290 sell fills and zero buy fills across every trade table Dune
--- has, including the raw bonding-curve event log. It had not bought at all: it
--- RECEIVED 21,865,947 tokens in one transfer, then sold them.
---
--- Treating those tokens as free costs nothing and reports every dollar of
--- proceeds as profit. Matching sales only against recorded buys scores such a
--- wallet at exactly zero and hides it. Both are wrong.
---
--- So tokens that arrive by transfer are valued at the market price at the
--- moment they land, and that value becomes cost basis. For the wallet above
--- this yields $658 of basis against a terminal's independently published
--- $658.0 -- the same method, reproduced on Dune.
---
--- Transfers that are the token leg of a swap are excluded by tx id, otherwise
--- every DEX buy would be counted twice. Transfers OUT reduce the remaining
--- position but are never counted as proceeds: moving tokens is not selling.
+-- CANDIDATE (transfers only) -- the live query with ONE change: read the two
+-- SPL transfer tables directly instead of the tokens_solana.transfers view.
+-- The dex scan is left exactly as the live query has it, so this isolates the
+-- transfers change from the single-scan change.
 -- ============================================================================
 
 WITH
@@ -97,16 +68,25 @@ transfer_legs AS (
         x.tokens,
         x.counterparty,
         r.block_time
-    FROM tokens_solana.transfers r
+    FROM (
+        SELECT block_time, tx_id, amount_display, from_owner, to_owner
+        FROM tokens_solana.spl_token_transfers
+        WHERE token_mint_address = '{{token_address}}'
+          AND block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
+          AND block_time >= date_add('day', -{{lookback_days}}, now())
+        UNION ALL
+        SELECT block_time, tx_id, amount_display, from_owner, to_owner
+        FROM tokens_solana.spl_token_2022_transfers
+        WHERE token_mint_address = '{{token_address}}'
+          AND block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
+          AND block_time >= date_add('day', -{{lookback_days}}, now())
+    ) r
     LEFT JOIN swap_tx s ON s.tx_id = r.tx_id
     CROSS JOIN UNNEST(ARRAY[
         ROW(r.to_owner,   'in' , r.amount_display, r.from_owner),
         ROW(r.from_owner, 'out', r.amount_display, r.to_owner)
     ]) AS x(wallet, direction, tokens, counterparty)
-    WHERE r.token_mint_address = '{{token_address}}'
-      AND r.block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
-      AND r.block_time >= date_add('day', -{{lookback_days}}, now())
-      AND s.tx_id IS NULL          -- not the token leg of a swap
+    WHERE s.tx_id IS NULL          -- not the token leg of a swap
       AND x.wallet IS NOT NULL
       AND x.tokens > 0
 ),

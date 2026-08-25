@@ -1,8 +1,8 @@
 {
-  "name": "bagtrace",
+  "name": "whoprinted",
   "version": "0.1.0",
   "private": true,
-  "description": "Paste a contract address, trace the wallets behind it. Powered by Dune.",
+  "description": "Paste a contract address, see which wallets printed on it, and go track them.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -10,7 +10,9 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "setup:dune": "node scripts/setup-dune.mjs",
-    "trace": "node scripts/trace.mjs"
+    "trace": "node scripts/trace.mjs",
+    "test": "node --import ./scripts/test/register.mjs --test src/lib/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "next": "^16.3.1",

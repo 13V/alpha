@@ -9,7 +9,8 @@
  * Docs: https://docs.dune.com/api-reference/api-overview
  */
 
-const DUNE_API = "https://api.dune.com/api/v1";
+/** Overridable only so the stub in scripts/stub-dune.mjs can stand in for Dune in tests. */
+const DUNE_API = process.env.DUNE_API_BASE ?? "https://api.dune.com/api/v1";
 
 export type QueryParameters = Record<string, string | number>;
 
@@ -129,24 +130,48 @@ export class DuneClient {
     return this.request(`/execution/${executionId}/status`);
   }
 
+  /**
+   * `columns` is a cost control, not a convenience. Dune charges a result read
+   * in datapoints -- rows times columns -- so asking for the fifteen columns a
+   * screen uses instead of all thirty-five is a direct cut to the bill. It
+   * changes nothing about the execution, which has already happened and been
+   * charged; only what gets sent back.
+   */
   results<Row = Record<string, unknown>>(
     executionId: string,
-    opts: { limit?: number; offset?: number } = {},
+    opts: { limit?: number; offset?: number; columns?: readonly string[] } = {},
   ): Promise<ExecutionResults<Row>> {
     const search = new URLSearchParams();
     if (opts.limit != null) search.set("limit", String(opts.limit));
     if (opts.offset != null) search.set("offset", String(opts.offset));
+    if (opts.columns?.length) search.set("columns", opts.columns.join(","));
     const qs = search.toString();
     return this.request(`/execution/${executionId}/results${qs ? `?${qs}` : ""}`);
   }
 
-  /** Latest cached result for a query. Does not trigger a run, still costs credits. */
+  /**
+   * Rows from the most recent execution that ran with these parameter values.
+   *
+   * This never starts a run — it either hands back a stored result or 404s.
+   * Dune matches on the parameters given and on the query's current SQL, so
+   * editing the query invalidates every stored result for it. Our queries are
+   * public, so a token someone else has already traced is already paid for.
+   *
+   * https://docs.dune.com/api-reference/executions/endpoint/get-query-result
+   */
   latestResults<Row = Record<string, unknown>>(
     queryId: number,
-    opts: { limit?: number } = {},
+    parameters: QueryParameters = {},
+    opts: { limit?: number; columns?: readonly string[] } = {},
   ): Promise<ExecutionResults<Row>> {
-    const qs = opts.limit != null ? `?limit=${opts.limit}` : "";
-    return this.request(`/query/${queryId}/results${qs}`);
+    const qs = new URLSearchParams();
+    if (opts.limit != null) qs.set("limit", String(opts.limit));
+    if (opts.columns?.length) qs.set("columns", opts.columns.join(","));
+    for (const [name, value] of Object.entries(parameters)) {
+      qs.set(`params.${name}`, String(value));
+    }
+    const suffix = qs.toString();
+    return this.request(`/query/${queryId}/results${suffix ? `?${suffix}` : ""}`);
   }
 
   createQuery(input: {

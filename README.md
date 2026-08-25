@@ -1,4 +1,4 @@
-# Bagtrace
+# Who Printed
 
 Paste a contract address, get the 100 wallets that made the most money on it, and copy them
 straight into Axiom.
@@ -129,7 +129,7 @@ So tokens arriving by transfer are **valued at the market price at the moment th
 (per-minute VWAP from DEX fills), and that value becomes cost basis. Reproducing the wallet
 above:
 
-| | Bagtrace | Terminal |
+| | Who Printed | Terminal |
 | --- | --- | --- |
 | tokens received | 21,865,947 | 21.9M |
 | valued at | **$659** | **$658.0** |
