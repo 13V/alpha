@@ -1,4 +1,4 @@
-# Bagtrace
+# Who Printed
 
 Paste a contract address, get the 100 wallets that made the most money on it,
 export them to a wallet tracker. Next 16 App Router, React 19, TypeScript.

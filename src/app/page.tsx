@@ -27,8 +27,10 @@ const AUTO = 0;
 
 const WINDOWS = [AUTO, 7, 30, 90, 365, 1095];
 const DAY_MS = 86_400_000;
-const KEY_STORE = "bagtrace-dune-key";
-const RUN_STORE = "bagtrace-inflight";
+const KEY_STORE = "whoprinted-dune-key";
+const RUN_STORE = "whoprinted-inflight";
+/** What these were called before the rename, so a saved key survives it. */
+const LEGACY_KEY_STORE = "bagtrace-dune-key";
 
 /**
  * A running execution is the expensive thing on Dune -- it is billed for the
@@ -121,6 +123,16 @@ export default function Home() {
     let stored: string | null = null;
     try {
       stored = window.localStorage.getItem(KEY_STORE);
+      if (!stored) {
+        // Carried over from before the rename. Moved rather than copied, so
+        // this runs once and the old entry does not linger in storage.
+        const legacy = window.localStorage.getItem(LEGACY_KEY_STORE);
+        if (legacy) {
+          window.localStorage.setItem(KEY_STORE, legacy);
+          window.localStorage.removeItem(LEGACY_KEY_STORE);
+          stored = legacy;
+        }
+      }
     } catch {
       /* storage blocked — the key just is not remembered */
     }
@@ -352,7 +364,7 @@ export default function Home() {
       <header className="appbar">
         <span className="brand">
           <i />
-          BAGTRACE
+          WHO PRINTED
         </span>
 
         <input
@@ -548,8 +560,8 @@ export default function Home() {
           <div className="state">
             <h2>paste a ca</h2>
             <p>
-              the 100 wallets that made the most money on it — ranked by realized profit, with
-              the market cap each one <b>entered</b> and <b>exited</b> at.
+              the 100 wallets that <b>printed</b> on it — ranked by realized profit, with the
+              market cap each one entered and exited at.
             </p>
             <p>
               cost basis counts dex buys <b>and</b> tokens received by transfer, valued at the

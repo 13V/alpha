@@ -1,5 +1,5 @@
 -- ============================================================================
--- Bagtrace — Top traders of a Solana SPL token, ranked by realized PnL.
+-- Who Printed — Top traders of a Solana SPL token, ranked by realized PnL.
 -- ============================================================================
 -- Source: dex_solana.trades       every decoded Solana DEX/AMM swap
 --         tokens_solana.transfers SPL movements, for tokens that arrived

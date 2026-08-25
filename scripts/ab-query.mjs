@@ -65,7 +65,7 @@ async function runOnce(label, path) {
   process.stdout.write(`${label}: creating query... `);
   const { query_id } = await duneFetch("/query", key, {
     method: "POST",
-    body: JSON.stringify({ name: `bagtrace A/B ${label}`, query_sql: sql, is_private: false }),
+    body: JSON.stringify({ name: `whoprinted A/B ${label}`, query_sql: sql, is_private: false }),
   });
   process.stdout.write(`${query_id}, executing... `);
 

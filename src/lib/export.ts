@@ -128,7 +128,7 @@ function csvCell(value: unknown): string {
 
 function labelFor(row: WalletRow, meta: ScanMeta): string {
   const tag = meta.tokenSymbol ?? meta.token.slice(0, 6);
-  return `bt_${tag}_${String(row.rank).padStart(3, "0")}`;
+  return `wp_${tag}_${String(row.rank).padStart(3, "0")}`;
 }
 
 /** Ticker used in wallet names — "14.10x - KIMCHI". */
@@ -233,7 +233,7 @@ export function exportFilename(format: ExportFormat, meta: ScanMeta): string {
   const spec = EXPORT_FORMATS.find((f) => f.id === format);
   const tag = (meta.tokenSymbol ?? meta.token.slice(0, 10)).toLowerCase();
   if (format === "axiom") return `highpnl-${tag}.json`;
-  return `bagtrace-${meta.chain}-${meta.mode}-${tag}.${spec?.extension ?? "txt"}`;
+  return `whoprinted-${meta.chain}-${meta.mode}-${tag}.${spec?.extension ?? "txt"}`;
 }
 
 export function downloadFile(filename: string, content: string, mime: string): void {

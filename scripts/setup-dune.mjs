@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Creates the four Bagtrace queries in your Dune account and prints the env
+ * Creates the four Who Printed queries in your Dune account and prints the env
  * lines to paste into .env.local. If the matching DUNE_QUERY_* id is already
  * set, the existing query is updated in place instead of a duplicate created.
  *
@@ -41,7 +41,7 @@ const chainParam = () => ({
 const QUERIES = [
   {
     env: "DUNE_QUERY_TRADERS_SOLANA",
-    name: "Bagtrace — Top traders (Solana)",
+    name: "Who Printed — Top traders (Solana)",
     file: "top_traders_solana.sql",
     description: "Top wallets by realized PnL for a Solana SPL token.",
     parameters: [
@@ -53,7 +53,7 @@ const QUERIES = [
   },
   {
     env: "DUNE_QUERY_TRADERS_EVM",
-    name: "Bagtrace — Top traders (EVM)",
+    name: "Who Printed — Top traders (EVM)",
     file: "top_traders_evm.sql",
     description: "Top wallets by realized PnL for an EVM token, on any dex.trades chain.",
     parameters: [
@@ -66,7 +66,7 @@ const QUERIES = [
   },
   {
     env: "DUNE_QUERY_HOLDERS_SOLANA",
-    name: "Bagtrace — Top holders (Solana)",
+    name: "Who Printed — Top holders (Solana)",
     file: "top_holders_solana.sql",
     description: "Top holders of a Solana SPL token by current balance.",
     parameters: [
@@ -76,7 +76,7 @@ const QUERIES = [
   },
   {
     env: "DUNE_QUERY_HOLDERS_EVM",
-    name: "Bagtrace — Top holders (EVM)",
+    name: "Who Printed — Top holders (EVM)",
     file: "top_holders_evm.sql",
     description: "Top holders of an EVM token by current balance.",
     parameters: [

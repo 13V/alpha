@@ -1,8 +1,8 @@
 {
-  "name": "bagtrace",
+  "name": "whoprinted",
   "version": "0.1.0",
   "private": true,
-  "description": "Paste a contract address, trace the wallets behind it. Powered by Dune.",
+  "description": "Paste a contract address, see which wallets printed on it, and go track them.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

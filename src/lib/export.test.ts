@@ -141,5 +141,5 @@ test("JSON export carries the scan metadata alongside the rows", () => {
 
 test("the Axiom filename is the one Axiom users expect, others are labelled", () => {
   assert.equal(exportFilename("axiom", META), "highpnl-morty.json");
-  assert.match(exportFilename("csv", META), /^bagtrace-solana-traders-morty\.csv$/);
+  assert.match(exportFilename("csv", META), /^whoprinted-solana-traders-morty\.csv$/);
 });

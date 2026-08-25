@@ -16,9 +16,9 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Bagtrace — who actually made money on this contract",
+  title: "Who Printed — the wallets that made money on this contract",
   description:
-    "Paste a contract address and trace the wallets behind it: realized PnL, entry and exit market caps, current bags. Solana, BNB Chain and Base, powered by Dune.",
+    "Paste a contract address, see the 100 wallets that printed on it, and export them straight into Axiom, Terminal or Photon. Solana, BNB Chain and Base, powered by Dune.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
