@@ -9,7 +9,8 @@
  * Docs: https://docs.dune.com/api-reference/api-overview
  */
 
-const DUNE_API = "https://api.dune.com/api/v1";
+/** Overridable only so the stub in scripts/stub-dune.mjs can stand in for Dune in tests. */
+const DUNE_API = process.env.DUNE_API_BASE ?? "https://api.dune.com/api/v1";
 
 export type QueryParameters = Record<string, string | number>;
 
@@ -140,13 +141,28 @@ export class DuneClient {
     return this.request(`/execution/${executionId}/results${qs ? `?${qs}` : ""}`);
   }
 
-  /** Latest cached result for a query. Does not trigger a run, still costs credits. */
+  /**
+   * Rows from the most recent execution that ran with these parameter values.
+   *
+   * This never starts a run — it either hands back a stored result or 404s.
+   * Dune matches on the parameters given and on the query's current SQL, so
+   * editing the query invalidates every stored result for it. Our queries are
+   * public, so a token someone else has already traced is already paid for.
+   *
+   * https://docs.dune.com/api-reference/executions/endpoint/get-query-result
+   */
   latestResults<Row = Record<string, unknown>>(
     queryId: number,
+    parameters: QueryParameters = {},
     opts: { limit?: number } = {},
   ): Promise<ExecutionResults<Row>> {
-    const qs = opts.limit != null ? `?limit=${opts.limit}` : "";
-    return this.request(`/query/${queryId}/results${qs}`);
+    const qs = new URLSearchParams();
+    if (opts.limit != null) qs.set("limit", String(opts.limit));
+    for (const [name, value] of Object.entries(parameters)) {
+      qs.set(`params.${name}`, String(value));
+    }
+    const suffix = qs.toString();
+    return this.request(`/query/${queryId}/results${suffix ? `?${suffix}` : ""}`);
   }
 
   createQuery(input: {

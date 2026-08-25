@@ -47,6 +47,62 @@ function fail(status: number, error: string, hint?: string) {
   return NextResponse.json({ error, ...(hint ? { hint } : {}) }, { status });
 }
 
+/** Minutes since an ISO timestamp, or null if it is missing or unparseable. */
+function minutesSince(iso: string | undefined): number | null {
+  if (!iso) return null;
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return null;
+  return Math.max(0, Math.round((Date.now() - then) / 60_000));
+}
+
+interface StoredResult {
+  rows: Array<Record<string, unknown>>;
+  executionId: string | null;
+  executionMillis: number | null;
+  ageMinutes: number | null;
+}
+
+/**
+ * Rows Dune already holds for this query and these parameters, if they are
+ * recent enough to stand in for a fresh run.
+ *
+ * Returns null for every unhappy path — nothing stored, stored but stale,
+ * stored but empty, or the lookup itself failing. The caller then executes, so
+ * the worst case of this whole path is one wasted round trip. It never
+ * surfaces an error: not finding a cached result is not a failure to report.
+ */
+async function reuseStored(
+  client: DuneClient,
+  plan: { queryId: number; parameters: Record<string, string | number> },
+  limit: number,
+): Promise<StoredResult | null> {
+  const maxAgeMinutes = envInt("DUNE_RESULT_MAX_AGE_MINUTES", 180);
+  if (maxAgeMinutes <= 0) return null;
+
+  try {
+    const stored = await client.latestResults<Record<string, unknown>>(
+      plan.queryId,
+      plan.parameters,
+      { limit },
+    );
+    const rows = stored.result?.rows ?? [];
+    if (rows.length === 0) return null;
+
+    // An age we cannot read is an age we cannot vouch for.
+    const ageMinutes = minutesSince(stored.execution_ended_at);
+    if (ageMinutes == null || ageMinutes > maxAgeMinutes) return null;
+
+    return {
+      rows,
+      executionId: stored.execution_id ?? null,
+      executionMillis: stored.result?.metadata?.execution_time_millis ?? null,
+      ageMinutes,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(request: Request) {
   let input: ScanRequest;
   try {
@@ -71,6 +127,37 @@ export async function POST(request: Request) {
     return fail(400, "Malformed execution id");
   }
 
+  /** Shape a finished Dune execution into the response the client renders. */
+  function payloadFrom(
+    rawRows: Array<Record<string, unknown>>,
+    extra: {
+      executionId: string | null;
+      executionMillis: number | null;
+      resultAgeMinutes: number | null;
+      cached: boolean;
+    },
+  ): ScanResponse {
+    const summary = summaryFromRows(rawRows);
+    return {
+      meta: {
+        token,
+        chain,
+        mode,
+        limit,
+        lookbackDays: mode === "traders" ? lookbackDays : null,
+        minUsd: mode === "traders" ? minUsd : null,
+        rowCount: rawRows.length,
+        holderCount: summary.holderCount,
+        circulatingSupply: summary.circulatingSupply,
+        currentMcap: summary.currentMcap,
+        tokenSymbol: summary.tokenSymbol,
+        fetchedAt: new Date().toISOString(),
+        ...extra,
+      },
+      rows: rawRows.map(normalizeRow),
+    };
+  }
+
   try {
     // ---- start leg -------------------------------------------------------
     if (!executionId) {
@@ -82,6 +169,24 @@ export async function POST(request: Request) {
             ...hit,
             meta: { ...hit.meta, cached: true },
           } satisfies Payload);
+        }
+
+        // Nothing local, so ask Dune whether it still holds rows from the last
+        // run of this query with these exact parameters. That lookup starts no
+        // execution and costs no execution credits, and our queries are public,
+        // so a token anyone has already traced comes back in one round trip
+        // instead of the minutes a cold Solana scan takes. A 404 — nobody has
+        // run it, or the SQL changed since — just falls through to executing.
+        const reused = await reuseStored(client, plan, limit);
+        if (reused) {
+          const payload = payloadFrom(reused.rows, {
+            executionId: reused.executionId,
+            executionMillis: reused.executionMillis,
+            resultAgeMinutes: reused.ageMinutes,
+            cached: true,
+          });
+          cacheSet(key, payload, ttl);
+          return NextResponse.json({ status: "done", ...payload } satisfies Payload);
         }
       }
 
@@ -108,32 +213,17 @@ export async function POST(request: Request) {
     if (status.state === "QUERY_STATE_COMPLETED") {
       const execution = await client.results<Record<string, unknown>>(executionId, { limit });
       const rawRows = execution.result?.rows ?? [];
-      const summary = summaryFromRows(rawRows);
 
       // Only an execution this process started for these exact parameters may
       // write the shared cache; see issuedFor above.
       const cacheable = issuedFor.get(executionId) === key;
 
-      const payload: ScanResponse = {
-        meta: {
-          token,
-          chain,
-          mode,
-          limit,
-          lookbackDays: mode === "traders" ? lookbackDays : null,
-          minUsd: mode === "traders" ? minUsd : null,
-          rowCount: rawRows.length,
-          holderCount: summary.holderCount,
-          circulatingSupply: summary.circulatingSupply,
-          currentMcap: summary.currentMcap,
-          tokenSymbol: summary.tokenSymbol,
-          executionId,
-          executionMillis: execution.result?.metadata?.execution_time_millis ?? null,
-          fetchedAt: new Date().toISOString(),
-          cached: false,
-        },
-        rows: rawRows.map(normalizeRow),
-      };
+      const payload = payloadFrom(rawRows, {
+        executionId,
+        executionMillis: execution.result?.metadata?.execution_time_millis ?? null,
+        resultAgeMinutes: null,
+        cached: false,
+      });
 
       if (cacheable) {
         cacheSet(key, payload, ttl);

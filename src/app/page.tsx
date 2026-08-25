@@ -342,7 +342,13 @@ export default function Home() {
               </span>
               <span className="dot">·</span>
               <span className="kv">
-                {data.meta.cached ? (
+                {data.meta.resultAgeMinutes != null ? (
+                  <b title="rows from a run dune already had — hit refresh for a live one">
+                    {data.meta.resultAgeMinutes < 1
+                      ? "just run"
+                      : `${data.meta.resultAgeMinutes}m old`}
+                  </b>
+                ) : data.meta.cached ? (
                   <b>cached</b>
                 ) : data.meta.executionMillis != null ? (
                   <b>{(data.meta.executionMillis / 1000).toFixed(1)}s</b>
