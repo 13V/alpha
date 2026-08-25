@@ -76,16 +76,20 @@ find, and prints the two numbers that predict cost.
   2.52x faster; warm against warm it was 1.07x. Never compare a candidate
   against a baseline that ran at a different cache temperature. Run both warm,
   then reverse the order.
-- **The window is a large lever on cost, but not a fixed multiple.** Same query,
-  same key, on a token five days old: 1095d 411.3s, 365d 97.8s, 7d 13.5s -- all
-  three returning the same 100 wallets in the same order, which is the solid
-  part and was diffed row by row. The *times* are not solid: those runs went
-  widest-first, so each warmed the cache for the next. A later 7d run on the
-  same token took 82s, six times the 13.5s. Same trap as the entry above, caught
-  the second time only because a real user run disagreed with the number that
-  had been put on the landing page. Quote a range, not a multiple.
-  The client walks a ladder (`LADDER` in `src/app/page.tsx`) and stops at the
-  first window whose earliest trade is not against the edge.
+- **Engine time is dominated by the cluster, not by the SQL.** The live query,
+  same token, same 7d window, minutes apart, has been observed at 9.3, 13.5,
+  15.6, 37.6, 45.6, 47.5, 82.0 and 173.8 seconds. An 18x spread on identical
+  input. Two consequences, and they are the most useful facts in this file:
+  you cannot measure a 2x SQL change against that noise without dozens of
+  samples, so do not try; and any number quoted from a handful of runs is
+  meaningless, including every number that used to be in this section.
+- **The window still matters, but state it qualitatively.** Same query, on a
+  five-day-old token, returned the same 100 wallets in the same order at 7d,
+  365d and 1095d -- diffed row by row, and that part is solid. 1095d was 411s
+  against a 7d median in the tens of seconds, so the direction is real. Do not
+  put a multiple on it. The client walks a ladder (`LADDER` in
+  `src/app/page.tsx`) and stops at the first window whose earliest trade is not
+  against the edge.
 
 ### Measured and rejected — do not retry
 
@@ -94,6 +98,16 @@ find, and prints the two numbers that predict cost.
 - Fixing the tie-break with a second `ORDER BY` key: correct, and 322s against
   the live query's 291s. A compound sort on a single-node window is worse.
 - Deriving the day grid from the price table: two more inlined references.
+- **Both "faster query" candidates.** `top_traders_solana.safe.sql` (one dex
+  scan instead of two, plus the SPL tables) and `.transfersonly.sql` (the SPL
+  tables alone) were each A/B'd against the live query at 7d, alternating and
+  warm. Neither came out ahead; both medians landed slower. Given the variance
+  above those comparisons cannot prove they are *worse* either -- the point is
+  that no SQL change here is measurable, so the plan-level wins (8 scans to 4,
+  8 transfer tables to 2) are not worth shipping on faith. Fewer scans is not
+  automatically faster: two equality predicates on separate columns prune files
+  better than one OR across both, so the eight cheap scans may beat four
+  expensive ones. Untested hypothesis, but it fits.
 
 ## Testing without credits
 

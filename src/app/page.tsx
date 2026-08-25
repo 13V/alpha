@@ -11,19 +11,18 @@ import type { ScanResponse } from "@/lib/types";
 
 const EVM_CHOICES: ChainId[] = ["base", "bnb", "ethereum"];
 /**
- * Widening the window costs real money and usually buys nothing: a scan that
- * reaches back further than the token existed spends that time finding trades
- * that cannot be there, and Dune bills the engine seconds either way.
+ * A window reaching back further than the token existed spends its engine
+ * seconds finding trades that cannot be there, and Dune bills those seconds.
  *
- * On one five-day-old token the same query returned byte-identical rankings at
- * 1095d, 365d and 7d, which is the part that matters and was diffed row by row.
- * The engine times were 411s, 98s and 14s -- but those three ran back to back
- * in that order, so each warmed the cache for the next and the decline conflates
- * two effects. A later 7d run on the same token came back at 82s. Treat the
- * window as an order-of-magnitude lever, not a fixed multiple.
+ * What is verified: on a five-day-old token the same query returned identical
+ * rankings at 7d, 365d and 1095d, diffed row by row. What is NOT verified is
+ * any speed multiple. Engine time here is dominated by Dune's cluster, not by
+ * the window or the SQL -- the same query on the same token at 7d has been
+ * observed anywhere from 9s to 174s. Do not put a number on this in copy or in
+ * comments; earlier versions of both did and were wrong twice.
  *
  * Auto walks up this ladder and stops at the first rung that covers the token,
- * so a young token is one cheap scan and an old one pays the wide scan it
+ * so a young token is one narrow scan and an old one pays the wide scan it
  * genuinely needs. The rungs are spread so the worst case is four small runs
  * before the big one, not a slow climb.
  */
@@ -582,35 +581,21 @@ export default function Home() {
             <div className="callout">
               <h3>auto window — it scans the token&rsquo;s life, not three years</h3>
               <p>
-                dune charges for the seconds a query holds its engine, and a window that reaches
-                back further than a token has existed spends most of them finding nothing.{" "}
-                <b>auto</b> starts at seven days and only reaches further back if the token is
-                actually older.
+                dune charges for the seconds a query holds its engine, and a window reaching
+                back further than a token has existed spends them finding nothing. <b>auto</b>{" "}
+                starts at seven days and only reaches further back if the token is actually
+                older. pick a window by hand and it runs exactly that one.
               </p>
-              <table className="ledger">
-                <tbody>
-                  <tr>
-                    <th scope="row">1095d</th>
-                    <td>411s</td>
-                    <td>the window you&rsquo;d have clicked</td>
-                  </tr>
-                  <tr>
-                    <th scope="row">365d</th>
-                    <td>98s</td>
-                    <td>same 100 wallets, same order</td>
-                  </tr>
-                  <tr data-win="yes">
-                    <th scope="row">7d</th>
-                    <td>14–82s</td>
-                    <td>same again — the token was 5 days old</td>
-                  </tr>
-                </tbody>
-              </table>
+              <p>
+                on a five-day-old token, seven days and three years returned the{" "}
+                <b>same 100 wallets in the same order</b> — diffed row by row. the narrow scan
+                is the cheap one and it is not a worse answer.
+              </p>
               <p className="fineprint">
-                one token, one query. the rankings were identical at all three windows — that
-                part we diffed row by row. the seconds move around a lot with dune&rsquo;s cache
-                and with how much the token has traded since, so read them as an order of
-                magnitude, not a promise. pick a window by hand and it runs exactly that.
+                how long any single scan takes is mostly not up to us. the same query on the
+                same token, minutes apart, has come back in 9 seconds and in 174. so a result
+                dune already has gets reused rather than re-run, and a scan you leave and come
+                back to is rejoined rather than started again.
               </p>
             </div>
           </div>
