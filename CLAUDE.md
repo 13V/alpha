@@ -99,7 +99,19 @@ The stub records the engine tier each request asks for at `/__seen`. Chromium
 is at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`; drive the real UI
 with `playwright-core` rather than trusting a change by eye.
 
-`npm run build` typechecks. There is no test suite and no eslint config.
+`npm run check` is typecheck, tests and build. `npm test` alone runs
+`src/lib/*.test.ts` on Node's own runner -- no framework, no build step, and
+`scripts/test/register.mjs` teaches Node the two import rules the source is
+written for (extensionless relative paths, and the `@/` alias).
+
+The test worth knowing about: `queries.test.ts` parses the final SELECT out of
+each `dune/*.sql` and asserts every name in `DISPLAY_COLUMNS` appears there.
+Dune answers an unknown column with `400`, not by ignoring it, so a mismatch
+breaks every request for that mode and chain -- which shipped once. Nothing
+else catches it: the compiler sees string literals and the stub answers
+whatever it is asked.
+
+There is no eslint config.
 
 ## Accounting, in one paragraph
 

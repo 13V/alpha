@@ -10,7 +10,9 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "setup:dune": "node scripts/setup-dune.mjs",
-    "trace": "node scripts/trace.mjs"
+    "trace": "node scripts/trace.mjs",
+    "test": "node --import ./scripts/test/register.mjs --test src/lib/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "next": "^16.3.1",
