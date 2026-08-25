@@ -11,3 +11,6 @@ npm-debug.log*
 next-env.d.ts
 *.tsbuildinfo
 .vercel
+
+# scratch row dumps from scripts/ab-query.mjs
+.ab/

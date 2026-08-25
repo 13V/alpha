@@ -47,6 +47,27 @@ function fail(status: number, error: string, hint?: string) {
   return NextResponse.json({ error, ...(hint ? { hint } : {}) }, { status });
 }
 
+type Performance = "small" | "medium" | "large";
+const TIERS: Performance[] = ["small", "medium", "large"];
+
+/**
+ * Which engine to run on.
+ *
+ * Dune bills an execution for the compute it uses and the time it occupies the
+ * engine, and a larger tier costs more per second than a smaller one, so this
+ * is the most direct control over spend there is.
+ *
+ * Set DUNE_PERFORMANCE and both modes use it. Left unset, the traders scan --
+ * the expensive one -- runs on medium, and the holders lookup, which is a
+ * balance read that finishes quickly whatever it runs on, runs on small.
+ * A value that is not one of the three names is ignored rather than sent.
+ */
+function enginePerformance(mode: string): Performance {
+  const configured = process.env.DUNE_PERFORMANCE as Performance | undefined;
+  if (configured && TIERS.includes(configured)) return configured;
+  return mode === "holders" ? "small" : "medium";
+}
+
 /** Minutes since an ISO timestamp, or null if it is missing or unparseable. */
 function minutesSince(iso: string | undefined): number | null {
   if (!iso) return null;
@@ -76,7 +97,7 @@ async function reuseStored(
   plan: { queryId: number; parameters: Record<string, string | number> },
   limit: number,
 ): Promise<StoredResult | null> {
-  const maxAgeMinutes = envInt("DUNE_RESULT_MAX_AGE_MINUTES", 180);
+  const maxAgeMinutes = envInt("DUNE_RESULT_MAX_AGE_MINUTES", 720);
   if (maxAgeMinutes <= 0) return null;
 
   try {
@@ -190,11 +211,7 @@ export async function POST(request: Request) {
         }
       }
 
-      const performance = (process.env.DUNE_PERFORMANCE ?? "large") as
-        | "small"
-        | "medium"
-        | "large";
-      const started = await client.execute(plan.queryId, plan.parameters, performance);
+      const started = await client.execute(plan.queryId, plan.parameters, enginePerformance(mode));
       recordIssued(started.execution_id, key);
       return NextResponse.json({
         status: "running",

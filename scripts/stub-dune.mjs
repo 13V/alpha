@@ -61,7 +61,15 @@ const server = createServer((req, res) => {
   }
 
   if (req.method === "POST" && /\/query\/\d+\/execute$/.test(url.pathname)) {
-    return send(200, { execution_id: "01STUBFRESHEXECUTION", state: "QUERY_STATE_PENDING" });
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      let perf = "?";
+      try { perf = JSON.parse(body || "{}").performance ?? "(unset)"; } catch {}
+      seen.push(`  -> execute performance=${perf}`);
+      send(200, { execution_id: "01STUBFRESHEXECUTION", state: "QUERY_STATE_PENDING" });
+    });
+    return;
   }
 
   if (req.method === "GET" && /\/execution\/[^/]+\/status$/.test(url.pathname)) {

@@ -12,12 +12,26 @@
  *
  * Needs a DUNE_API_KEY with datapoints left; each side is a real execution.
  */
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { duneFetch, loadEnv } from "./dune-env.mjs";
 
 loadEnv(process.cwd());
 
 const argv = process.argv.slice(2);
+const flag = (name, fallback) => {
+  const i = argv.indexOf(`--${name}`);
+  if (i === -1) return fallback;
+  const value = argv[i + 1];
+  argv.splice(i, 2);
+  return value;
+};
+// Every run here is billed for the engine time it occupies. medium by default;
+// pass --performance large only when comparing against a number measured there.
+const PERF = flag("performance", "medium");
+// Rows from a previous run of the baseline, so the expensive side is paid once.
+const BASELINE_ROWS = flag("baseline-rows", null);
+// Where each side's rows are written, so a re-diff never costs another run.
+const OUT_DIR = flag("out", ".ab");
 const days = /^\d+$/.test(argv[argv.length - 1]) ? argv.pop() : "365";
 const token = argv.pop();
 const [baselinePath, ...candidatePaths] = argv;
@@ -32,7 +46,7 @@ if (!key) {
   process.exit(2);
 }
 
-const PERFORMANCE = process.env.DUNE_PERFORMANCE ?? "large";
+
 /** Fractional difference we are willing to call the same number. */
 const TOLERANCE = 1e-6;
 /** Columns whose value is a float sum; everything else must match exactly. */
@@ -58,7 +72,7 @@ async function runOnce(label, path) {
   const started = Date.now();
   const { execution_id } = await duneFetch(`/query/${query_id}/execute`, key, {
     method: "POST",
-    body: JSON.stringify({ performance: PERFORMANCE }),
+    body: JSON.stringify({ performance: PERF }),
   });
 
   for (;;) {
@@ -73,6 +87,11 @@ async function runOnce(label, path) {
 
   const res = await duneFetch(`/execution/${execution_id}/results?limit=100`, key);
   const wall = Date.now() - started;
+  try {
+    mkdirSync(OUT_DIR, { recursive: true });
+    writeFileSync(`${OUT_DIR}/${label.trim().replace(/\W+/g, "_")}.json`,
+      JSON.stringify(res.result?.rows ?? []));
+  } catch { /* diffing still works, it just cannot be replayed for free */ }
   const engine = res.result?.metadata?.execution_time_millis ?? null;
   console.log(`done in ${(wall / 1000).toFixed(1)}s wall, ${engine != null ? (engine / 1000).toFixed(1) + "s engine" : "engine n/a"}`);
   return { rows: res.result?.rows ?? [], wall, engine, queryId: query_id };
@@ -123,7 +142,19 @@ function diff(a, b) {
   return { problems, worst };
 }
 
-const baseline = await runOnce("baseline", baselinePath);
+console.log(`engine tier: ${PERF}. Each side below is a real execution, billed for`);
+console.log(`the engine time it occupies. Run scripts/explain.mjs first -- it scans no`);
+console.log(`data and catches the errors that would otherwise cost a full run.\n`);
+
+let baseline;
+if (BASELINE_ROWS) {
+  const rows = JSON.parse(readFileSync(BASELINE_ROWS, "utf8"));
+  baseline = { rows, wall: NaN, engine: null, queryId: "(from file)" };
+  console.log(`baseline: ${rows.length} rows read from ${BASELINE_ROWS} — not re-run`);
+} else {
+  baseline = await runOnce("baseline", baselinePath);
+  console.log(`baseline rows saved to ${OUT_DIR}/baseline.json — pass --baseline-rows to skip re-running it`);
+}
 const results = [];
 for (const path of candidatePaths) {
   const name = path.split("/").pop().replace(/\.sql$/, "");
@@ -136,11 +167,15 @@ for (const path of candidatePaths) {
 }
 
 console.log("\n=== SPEED ===");
-console.log(`baseline  ${(baseline.wall / 1000).toFixed(1)}s wall` +
-  (baseline.engine != null ? `, ${(baseline.engine / 1000).toFixed(1)}s engine` : ""));
+console.log(Number.isNaN(baseline.wall)
+  ? "baseline  not re-run (rows from file); speed ratios below are unavailable"
+  : `baseline  ${(baseline.wall / 1000).toFixed(1)}s wall` +
+    (baseline.engine != null ? `, ${(baseline.engine / 1000).toFixed(1)}s engine` : ""));
 for (const { name, run, error } of results) {
   if (!run) { console.log(`${name.padEnd(24)} failed: ${error}`); continue; }
-  const wall = `${(run.wall / 1000).toFixed(1)}s (${(baseline.wall / run.wall).toFixed(2)}x)`;
+  const wall = Number.isNaN(baseline.wall)
+    ? `${(run.wall / 1000).toFixed(1)}s`
+    : `${(run.wall / 1000).toFixed(1)}s (${(baseline.wall / run.wall).toFixed(2)}x)`;
   const engine = baseline.engine != null && run.engine != null
     ? `  engine ${(run.engine / 1000).toFixed(1)}s (${(baseline.engine / run.engine).toFixed(2)}x)` : "";
   console.log(`${name.padEnd(24)} ${wall}${engine}`);
