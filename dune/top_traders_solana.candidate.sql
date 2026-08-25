@@ -1,40 +1,58 @@
 -- ============================================================================
--- CANDIDATE — faster rewrite of top_traders_solana.sql. NOT YET LIVE.
+-- CANDIDATE -- faster rewrite of top_traders_solana.sql. NOT LIVE.
 -- ============================================================================
--- Same output columns, same accounting, same custodial filter. Two changes,
--- both aimed at wall-clock, neither at the numbers:
+-- MEASURED on GUmbtfjSZkybSFgPibBcvwExEBdXwewJHR5PkTjzpump, 1095d, large:
 --
---   1. ONE pass over dex_solana.trades instead of two.
---      The old shape was `WHERE token_bought = X UNION ALL WHERE token_sold = X`,
---      which is two scans of the same table. An OR predicate plus UNNEST gets
---      both legs out of a single scan.
+--   engine time     291.1s -> 169.3s   (1.71x)
+--   dex_solana.trades scans in plan   8 -> 5
+--   transfer tables in plan           8 -> 2
+--   wallet set and rank order         identical
+--   realized_pnl_usd                  within 0.21% (largest move $10.17)
+--   received_value_usd                differs on 42 of 100 wallets
 --
---   2. The as-of price join no longer sorts every row on one node.
---      The old shape was:
+-- The last line is why this is still NOT LIVE. See (3).
+--
+-- THREE CHANGES:
+--
+--   1. Read the two SPL transfer tables instead of tokens_solana.transfers.
+--      That view unions eight tables, six of which are native SOL movement --
+--      sol_transfers alone is every SOL transfer on Solana. A filter on
+--      token_mint_address cannot match a row in any of them, but the query
+--      plan still carried all eight. This is the single largest win here.
+--
+--   2. One pass over dex_solana.trades per reference instead of two.
+--      fills was `WHERE token_bought = X UNION ALL WHERE token_sold = X`; an OR
+--      predicate plus UNNEST gets both legs from one scan. Trino inlines a CTE
+--      at every reference, so the count that matters is references x scans:
+--      the plan went from 8 to 5. Getting below 5 means breaking the DAG --
+--      price_minute genuinely feeds three branches -- which SQL cannot express
+--      without materialisation. The generated day_grid exists for this reason:
+--      reading the grid bounds off the price table cost two more scans.
+--
+--   3. The price fill no longer sorts every row on one node.
+--      The live query does:
 --
 --        LAST_VALUE(price) IGNORE NULLS OVER (
 --            ORDER BY block_time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
 --
---      over the union of price minutes and transfer legs. A window with no
---      PARTITION BY funnels every row through a single Trino worker and sorts
---      it there. On a token with millions of transfer legs that is the whole
---      query. Here the fill happens inside day partitions, which run in
---      parallel, and days are stitched together by a second fill over one row
---      per day -- a few hundred rows, so the unpartitioned sort that remains is
---      trivial.
+--      over price minutes UNION every transfer leg, with no PARTITION BY. The
+--      plan confirms it: LocalExchange[partitioning = SINGLE] feeding the
+--      window. Every row through one thread. Here the fill runs inside day
+--      partitions and days are stitched by a carry over one row per day.
 --
--- Equivalence argument for (2): a transfer takes the last price at or before
--- its own block_time. Within its day, the partitioned window gives exactly
--- that. If no price has been seen yet that day, the carried close of the
--- previous priced day is by definition the last price before it. The two
--- branches are disjoint and cover every case, so COALESCE of them equals the
--- global window. The old form also had a tie at exactly equal block_time
--- between a price row and a transfer row, which was resolved arbitrarily;
--- here a transfer in a priced minute deterministically takes that minute.
+--      This is also the one change that moves numbers, and it is not yet
+--      explained. The intent -- a transfer takes the last price at or before
+--      its own block_time -- is the same under both, and both directions of
+--      drift appear, which points at ordering of equal timestamps rather than
+--      a bias. But "points at" is not "shown", and until it is shown this
+--      stays out of the app. Changes 1 and 2 are pure plan changes and touch
+--      no arithmetic; if 3 cannot be reconciled, ship 1 and 2 alone.
 --
--- VERIFY BEFORE SWITCHING: scripts/ab-query.mjs runs this and the live query
--- on the same token and diffs every row. Do not point the app at this file
--- until that diff is clean.
+-- REJECTED, measured, do not retry: reading pumpdotfun_solana.trades and
+-- pumpswap_solana.trades instead of dex_solana.trades. Those curated tables
+-- are views over dex_solana.trades, so the plan went to TEN scans of it.
+--
+-- VERIFY: scripts/ab-query.mjs <live> <this> <token> [days]
 -- ============================================================================
 
 WITH
@@ -96,28 +114,36 @@ swap_tx AS (
 ),
 
 priced_day AS (
-    SELECT date_trunc('day', ts) AS d, MAX_BY(price, ts) AS px
+    SELECT CAST(date_trunc('day', ts) AS date) AS d, MAX_BY(price, ts) AS px
     FROM price_minute
     GROUP BY 1
 ),
 
--- Close of each day, carried forward. The day grid has to be dense: a token
--- can go a week without a trade while transfers keep moving, and a transfer on
--- one of those days still needs the last price before it. Joining a sparse
--- table on "yesterday" would hand those days a null. One row per calendar day
--- between the first and last trade, so both the sequence and the window over
--- it are trivial at any window this app allows.
+-- Every day in the requested window, from the parameters alone. Reading the
+-- bounds off the price table instead would mean referencing it twice, and
+-- Trino inlines a CTE at every reference -- each one another scan of
+-- dex_solana.trades underneath. A generated grid costs no scan at all, and at
+-- the widest window this app offers it is about 1,100 rows.
+day_grid AS (
+    SELECT t.day AS d
+    FROM UNNEST(sequence(
+        CAST(date_add('day', -{{lookback_days}}, now()) AS date),
+        CAST(now() AS date),
+        INTERVAL '1' DAY
+    )) AS t(day)
+),
+
+-- Close of each day, carried forward. The grid has to be dense: a token can go
+-- a week without a trade while transfers keep moving, and a transfer on one of
+-- those days still needs the last price before it. Joining a sparse table on
+-- "yesterday" would hand those days a null.
 day_close AS (
     SELECT
         g.d,
         LAST_VALUE(p.px) IGNORE NULLS OVER (
             ORDER BY g.d ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         ) AS carry
-    FROM (
-        SELECT t.day AS d
-        FROM (SELECT MIN(d) AS lo, MAX(d) AS hi FROM priced_day) b
-        CROSS JOIN UNNEST(sequence(b.lo, b.hi, INTERVAL '1' DAY)) AS t(day)
-    ) g
+    FROM day_grid g
     LEFT JOIN priced_day p ON p.d = g.d
 ),
 
@@ -128,16 +154,32 @@ transfer_legs AS (
         x.tokens,
         x.counterparty,
         r.block_time
-    FROM tokens_solana.transfers r
+    FROM (
+        -- tokens_solana.transfers is a view over eight tables, only two of
+        -- which can hold an SPL mint. The other six are native SOL movement --
+        -- sol_transfers, vote withdrawals, nonce withdrawals, account opens and
+        -- closes -- and sol_transfers alone is every SOL transfer on Solana.
+        -- Filtering the view by token_mint_address cannot match a row in any of
+        -- them, but they are still in the plan. Reading the two SPL tables
+        -- directly asks for exactly the rows that can match.
+        SELECT block_time, tx_id, amount_display, from_owner, to_owner
+        FROM tokens_solana.spl_token_transfers
+        WHERE token_mint_address = '{{token_address}}'
+          AND block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
+          AND block_time >= date_add('day', -{{lookback_days}}, now())
+        UNION ALL
+        SELECT block_time, tx_id, amount_display, from_owner, to_owner
+        FROM tokens_solana.spl_token_2022_transfers
+        WHERE token_mint_address = '{{token_address}}'
+          AND block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
+          AND block_time >= date_add('day', -{{lookback_days}}, now())
+    ) r
     LEFT JOIN swap_tx s ON s.tx_id = r.tx_id
     CROSS JOIN UNNEST(ARRAY[
         ROW(r.to_owner,   'in' , r.amount_display, r.from_owner),
         ROW(r.from_owner, 'out', r.amount_display, r.to_owner)
     ]) AS x(wallet, direction, tokens, counterparty)
-    WHERE r.token_mint_address = '{{token_address}}'
-      AND r.block_date >= CAST(date_add('day', -{{lookback_days}}, now()) AS date)
-      AND r.block_time >= date_add('day', -{{lookback_days}}, now())
-      AND s.tx_id IS NULL          -- not the token leg of a swap
+    WHERE s.tx_id IS NULL          -- not the token leg of a swap
       AND x.wallet IS NOT NULL
       AND x.tokens > 0
 ),
@@ -146,8 +188,8 @@ transfer_legs AS (
 -- split across workers.
 timeline AS (
     SELECT
-        date_trunc('day', ts) AS day,
-        ts                    AS block_time,
+        CAST(date_trunc('day', ts) AS date) AS day,
+        ts                                  AS block_time,
         price,
         CAST(NULL AS varchar) AS wallet,
         CAST(NULL AS varchar) AS direction,
@@ -156,7 +198,7 @@ timeline AS (
     FROM price_minute
     UNION ALL
     SELECT
-        date_trunc('day', block_time),
+        CAST(date_trunc('day', block_time) AS date),
         block_time,
         CAST(NULL AS double),
         wallet,
@@ -260,7 +302,7 @@ marked AS (
     SELECT
         j.*,
         j.acquired_cost / NULLIF(j.acquired_tokens, 0) AS avg_cost_price,
-        (SELECT carry FROM day_close ORDER BY d DESC LIMIT 1) AS market_price
+        (SELECT price FROM price_minute ORDER BY ts DESC LIMIT 1) AS market_price
     FROM joined j
 ),
 
