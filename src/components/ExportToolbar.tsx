@@ -54,17 +54,17 @@ export default function ExportToolbar({
     <div className="actions">
       <span className="count">
         <b>{rows.length}</b>
-        {selectedCount > 0 ? " selected" : " wallets"}
+        {selectedCount > 0 ? " picked" : " wallets"}
       </span>
 
       <button className="chip" data-primary onClick={() => copy("axiom")}>
-        {copied === "axiom" ? "Copied" : "Copy for Axiom"}
+        {copied === "axiom" ? "copied ✓" : "Copy for Axiom"}
       </button>
       <button className="chip" onClick={() => copy("addresses")}>
-        {copied === "addresses" ? "Copied" : "Addresses"}
+        {copied === "addresses" ? "copied ✓" : "Addresses"}
       </button>
       <button className="chip" onClick={() => copy("csv")}>
-        {copied === "csv" ? "Copied" : "CSV"}
+        {copied === "csv" ? "copied ✓" : "CSV"}
       </button>
       <button
         className="chip"
@@ -86,7 +86,7 @@ export default function ExportToolbar({
 
       <span className="bar-sep" />
 
-      <span className="label">Name by</span>
+      <span className="label">name by</span>
       <div className="seg">
         {NAME_BY.map((option) => (
           <button

@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const sans = Inter({
+const sans = Space_Grotesk({
   subsets: ["latin"],
   variable: "--font-sans",
   display: "swap",

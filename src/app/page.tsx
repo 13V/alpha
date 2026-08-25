@@ -63,8 +63,8 @@ export default function Home() {
     const key = apiKey.trim();
     if (!key) {
       setFailure({
-        error: "Add your Dune API key",
-        hint: "It is free at dune.com/settings/api and stays in this browser.",
+        error: "add your dune api key",
+        hint: "it is free at dune.com/settings/api and never leaves this browser.",
       });
       setEditingKey(true);
       return;
@@ -154,8 +154,8 @@ export default function Home() {
         if (Date.now() > deadline) {
           setData(null);
           setFailure({
-            error: "Gave up after 15 minutes",
-            hint: "The query is still running on Dune — try a shorter window.",
+            error: "gave up after 15 minutes",
+            hint: "the query is still running on dune. try a shorter window.",
           });
           return;
         }
@@ -212,7 +212,7 @@ export default function Home() {
           className="ca-field"
           value={token}
           onChange={(e) => setToken(e.target.value)}
-          placeholder="Contract address"
+          placeholder="paste a ca"
           spellCheck={false}
           autoComplete="off"
           aria-label="Contract address"
@@ -268,7 +268,7 @@ export default function Home() {
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Dune API key"
+              placeholder="dune api key"
               spellCheck={false}
               autoComplete="off"
               aria-label="Dune API key"
@@ -285,8 +285,8 @@ export default function Home() {
         ) : (
           <span className="keychip">
             <i />
-            Key set
-            <button onClick={() => setEditingKey(true)}>change</button>
+            key set
+            <button onClick={() => setEditingKey(true)}>swap</button>
           </span>
         )}
       </header>
@@ -294,10 +294,10 @@ export default function Home() {
       <main className="main">
         {loading && (
           <div className="state">
-            <h2>Running on Dune</h2>
+            <h2>cooking</h2>
             <p>
-              {elapsed}s elapsed. Solana can take several minutes on a token nobody has
-              queried before.
+              {elapsed}s in. solana takes a few minutes on a token nobody has pulled before —
+              dune has to scan it cold.
             </p>
             <div className="bar-progress">
               <i />
@@ -307,7 +307,7 @@ export default function Home() {
 
         {!loading && failure && (
           <div className="state" data-kind="error">
-            <h2>{failure.error}</h2>
+            <h2>{failure.error.toLowerCase()}</h2>
             {failure.hint && <p>{failure.hint}</p>}
           </div>
         )}
@@ -348,9 +348,9 @@ export default function Home() {
 
             {truncated && (
               <div className="note">
-                <b>Older than the {data.meta.lookbackDays}-day window.</b> Its earliest trades
-                sit at the edge, so acquisitions from before that are missing and these wallets
-                look less profitable than they were. Widen the window.
+                <b>older than the {data.meta.lookbackDays}d window.</b> its earliest trades sit
+                right at the edge, so buys from before that are missing and these wallets look
+                worse than they were. widen it.
               </div>
             )}
 
@@ -375,26 +375,26 @@ export default function Home() {
 
         {!loading && !failure && data && data.rows.length === 0 && (
           <div className="state">
-            <h2>Nothing indexed for this contract</h2>
+            <h2>nothing here yet</h2>
             <p>
               {data.meta.chain === "solana"
-                ? "Dune's Solana pipeline runs several hours behind the chain, so a token that launched today will not appear until it catches up."
-                : "It may not have traded on a DEX that Dune decodes, or its trades are older than the window."}
+                ? "dune's solana pipeline runs a few hours behind the chain, so a token that launched today will not show up until it catches up. check back later."
+                : "it may not have traded on a dex dune decodes, or its trades are older than the window."}
             </p>
           </div>
         )}
 
         {!loading && !failure && !data && (
           <div className="state">
-            <h2>Paste a contract address</h2>
+            <h2>paste a ca</h2>
             <p>
-              The 100 wallets that made the most money on it, ranked by realized profit, with
-              the market cap each one entered and exited at.
+              the 100 wallets that made the most money on it — ranked by realized profit, with
+              the market cap each one <b>entered</b> and <b>exited</b> at.
             </p>
             <p>
-              Cost basis counts DEX buys <b>and</b> tokens received by transfer, valued at the
-              price when they landed — which is how the winners on pump.fun tokens actually
-              acquire their bags.
+              cost basis counts dex buys <b>and</b> tokens received by transfer, valued at the
+              price when they landed. that is how the winners on pump.fun tokens actually get
+              their bags — miss it and they all read as zero.
             </p>
           </div>
         )}
@@ -402,10 +402,10 @@ export default function Home() {
 
       <footer className="statusbar">
         <span>
-          {detected ? `${CHAINS[detected].label} detected` : "Solana mint or 0x address"}
+          {detected ? `${CHAINS[detected].label.toLowerCase()} detected` : "solana mint or 0x address"}
         </span>
         <span className="push" />
-        <span>Your key stays in this browser and is only passed through to Dune</span>
+        <span>your key stays in this browser — only passed through to dune</span>
         <span>·</span>
         <a href="https://dune.com" target="_blank" rel="noreferrer">
           Dune
