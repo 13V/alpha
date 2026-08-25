@@ -402,6 +402,11 @@ export default function Home() {
               price when they landed. that is how the winners on pump.fun tokens actually get
               their bags — miss it and they all read as zero.
             </p>
+            <p>
+              then go track them. <b>axiom</b> imports the tracked-wallet json as-is,{" "}
+              <b>terminal</b> and <b>photon</b> take the address list — one click either way,
+              named <code>14.1x - TICKER</code> so you know who just fired.
+            </p>
           </div>
         )}
       </main>

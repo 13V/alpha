@@ -57,13 +57,26 @@ export default function ExportToolbar({
         {selectedCount > 0 ? " picked" : " wallets"}
       </span>
 
-      <button className="chip" data-primary onClick={() => copy("axiom")}>
+      <button
+        className="chip"
+        data-primary
+        title="Tracked-wallet JSON — paste straight into Axiom's import"
+        onClick={() => copy("axiom")}
+      >
         {copied === "axiom" ? "copied ✓" : "Copy for Axiom"}
       </button>
-      <button className="chip" onClick={() => copy("addresses")}>
-        {copied === "addresses" ? "copied ✓" : "Addresses"}
+      <button
+        className="chip"
+        title="One wallet per line — paste into Terminal, Photon or any tracker"
+        onClick={() => copy("addresses")}
+      >
+        {copied === "addresses" ? "copied ✓" : "Terminal / Photon"}
       </button>
-      <button className="chip" onClick={() => copy("csv")}>
+      <button
+        className="chip"
+        title="Every column, for your own spreadsheet"
+        onClick={() => copy("csv")}
+      >
         {copied === "csv" ? "copied ✓" : "CSV"}
       </button>
       <button

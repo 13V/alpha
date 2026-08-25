@@ -750,11 +750,33 @@ tbody tr[data-sel="true"] td.pnl[data-sign="neg"] { background: #fce4e9; }
 
 .sheet-body p:last-child { margin-bottom: 0; }
 
+/* Prose that follows a list needs the gap the list does not carry. */
+.sheet-body ul + p { margin-top: 0.6rem; }
+
 .sheet-body b {
   color: var(--ink);
   font-weight: 700;
   background: var(--cream);
   padding: 0 0.18rem;
+}
+
+.sheet-body code {
+  font-family: var(--mono);
+  background: var(--cream);
+  border: 1px solid var(--ink);
+  padding: 0.05rem 0.28rem;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Names of on-screen controls, so "Copy for Axiom" reads as the button
+   rather than as a phrase in the sentence. */
+.sheet-body i {
+  font-style: normal;
+  font-weight: 700;
+  color: var(--ink);
+  box-shadow: inset 0 -0.35em 0 var(--blue-soft);
 }
 
 .sheet-body ul {

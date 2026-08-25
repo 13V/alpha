@@ -49,7 +49,7 @@ export const EXPORT_FORMATS: Array<{
   {
     id: "addresses",
     label: "Address list",
-    description: "One wallet per line — what most trackers want pasted in",
+    description: "One wallet per line — paste into Terminal, Photon or GMGN",
     extension: "txt",
     mime: "text/plain",
   },

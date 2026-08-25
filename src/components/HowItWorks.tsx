@@ -113,6 +113,34 @@ pnl      = USD received
           </section>
 
           <section>
+            <h3>tracking them after</h3>
+            <p>
+              A list is only worth something if you can follow it. Every export takes the
+              rows you have on screen, or just the ones you tick.
+            </p>
+            <ul>
+              <li>
+                <b>Axiom</b> — <i>Copy for Axiom</i> emits its tracked-wallet JSON, ready to
+                paste into the import box. Groups, emoji and alert toggles come along with it.
+              </li>
+              <li>
+                <b>Terminal</b> and <b>Photon</b> — <i>Terminal / Photon</i> copies one
+                address per line, which is what both wallet trackers take pasted in. Any
+                other tracker that accepts a plain list works off the same copy.
+              </li>
+              <li>
+                <b>CSV</b> — every column, for your own spreadsheet.
+              </li>
+            </ul>
+            <p>
+              Wallet names are built from the run, so they stay meaningful in whatever you
+              paste them into. <b>name by</b> switches between{" "}
+              <code>14.10x - KIMCHI</code>, <code>$82.4K - KIMCHI</code>,{" "}
+              <code>#3 - KIMCHI</code> and the shortened address.
+            </p>
+          </section>
+
+          <section>
             <h3>what it cannot see</h3>
             <ul>
               <li>
