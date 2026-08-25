@@ -1,0 +1,102 @@
+# Bagtrace
+
+Paste a contract address, get the 100 wallets that made the most money on it,
+export them to a wallet tracker. Next 16 App Router, React 19, TypeScript.
+Users bring their own Dune API key; it lives in their browser, is sent per
+request, and is never logged, persisted server-side, or part of a cache key.
+
+## Layout
+
+    dune/*.sql              the four queries, run on Dune, not in this repo
+    src/app/api/trace/      start/poll route — one short round trip per call
+    src/lib/dune.ts         Dune Data API client (DUNE_API_BASE overridable)
+    src/lib/scan.ts         validation + which query id and params to run
+    scripts/explain.mjs     EXPLAIN a query without running it — USE THIS FIRST
+    scripts/ab-query.mjs    run baseline vs candidates, diff every row
+    scripts/stub-dune.mjs   fake api.dune.com, for testing without credits
+
+Live query ids: traders svm 8385958, evm 8385959; holders svm 8385960,
+evm 8385961. They are public, so any key can execute them — which is also why
+Dune's stored results are shared across everyone using the app.
+
+## Hard rules
+
+- **Never commit an API key.** Check `git diff --cached` before every commit.
+  Keys live in `.env.local`, which is gitignored.
+- **Never point the app at unverified SQL.** These numbers are people's money.
+  `scripts/ab-query.mjs` must show the same wallets in the same order first.
+- Push only to the branch named in the task. Do not open a PR unless asked.
+- Changing a query means `PATCH`ing it on Dune. Editing the `.sql` file alone
+  changes nothing, and it invalidates every stored result for that query.
+
+## Dune: what costs money
+
+Billing is **engine time**, not rows. Reading a 100-wallet result is 3,500
+datapoints (rows x columns), about 3.5 credits on Free. The multi-minute scan
+that produced it is the entire rest of the bill. So, in order:
+
+1. Don't execute — `DUNE_RESULT_MAX_AGE_MINUTES` reuses a run Dune already has,
+   and the client rejoins its own in-flight execution after a reload.
+2. Smaller engine tier. Unset, traders runs `medium`, holders `small`.
+3. A faster query, since the bill tracks engine seconds.
+
+**Run `scripts/explain.mjs` before any execution.** EXPLAIN scans no data, so it
+catches syntax and type errors that otherwise cost a full multi-minute run to
+find, and prints the two numbers that predict cost.
+
+## Dune: traps that cost real credits to discover
+
+- **Trino inlines CTEs.** A table read once in the SQL is read once *per
+  reference to the CTE that reads it*, transitively. `fills` referenced four
+  times over a two-scan UNION put `dex_solana.trades` in the plan eight times.
+  The plan's count is the truth, not the FROM clauses.
+- **`tokens_solana.transfers` is a view over eight tables.** Six are native SOL
+  movement — `sol_transfers` is every SOL transfer on Solana. A
+  `token_mint_address` filter cannot match a row in any of them, but they are
+  all in the plan. Read `tokens_solana.spl_token_transfers` and
+  `spl_token_2022_transfers` directly.
+- **A window with no `PARTITION BY` runs on one worker.** Look for
+  `LocalExchange[partitioning = SINGLE]` feeding a `Window[orderBy = ...]`.
+  Fine over aggregated rows, ruinous over raw ones.
+- **The live traders query is non-deterministic.** Its as-of price window has no
+  tie-break, so transfers landing exactly on a minute boundary take either that
+  minute's price or the previous one depending on how rows spread across
+  workers. Two identical runs disagreed on 694 values, `avg_buy_mcap` by $46.
+  Fix pending in `dune/top_traders_solana.safe.sql`.
+- **Warm-cache readings lie.** A repeat run of the same token is many times
+  faster than a cold one, and concurrent runs roughly double. Compare engine
+  time, and reverse the order before believing a speedup.
+- Timing measured on `GUmbtfj...` at 1095d: live 291.1s, safe candidate 115.7s.
+
+### Measured and rejected — do not retry
+
+- `pumpdotfun_solana.trades` / `pumpswap_solana.trades` instead of
+  `dex_solana.trades`: they are **views over it**. Plan went to ten scans.
+- Fixing the tie-break with a second `ORDER BY` key: correct, and 322s against
+  the live query's 291s. A compound sort on a single-node window is worse.
+- Deriving the day grid from the price table: two more inlined references.
+
+## Testing without credits
+
+    node scripts/stub-dune.mjs --port 3999 --mode stored|cold
+    DUNE_API_BASE=http://localhost:3999 PORT=3100 npx next start
+
+The stub records the engine tier each request asks for at `/__seen`. Chromium
+is at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`; drive the real UI
+with `playwright-core` rather than trusting a change by eye.
+
+`npm run build` typechecks. There is no test suite and no eslint config.
+
+## Accounting, in one paragraph
+
+Cost basis is weighted-average and counts **dex buys plus tokens received by
+transfer**, valued at the market price when they landed. On pump.fun tokens most
+real winners never appear as buyers — the top wallet on one measured token had
+1,290 sells and zero buys, having received 21.8M tokens in a single transfer.
+Treating those as free reports every dollar of proceeds as profit; matching
+sales only against recorded buys scores the wallet at zero. Both are wrong.
+Transfers that are the token leg of a swap are excluded by tx id. Transfers out
+reduce the position but are never proceeds. Wallets trading with more than 200
+distinct transfer counterparties are exchange infrastructure and are dropped.
+`buy_coverage` says how much of what a wallet sold has a known cost; below 1.0
+its profit is a ceiling, not a measurement.
