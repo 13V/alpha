@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { cacheGet, cacheKey, cacheSet } from "@/lib/cache";
+import { CHAINS } from "@/lib/chains";
 import { DuneClient, DuneError } from "@/lib/dune";
 import { DISPLAY_COLUMNS, normalizeRow, summaryFromRows } from "@/lib/queries";
 import { envInt, isScanFailure, resolveScan, type ScanRequest } from "@/lib/scan";
@@ -54,20 +55,46 @@ const TIERS: Performance[] = ["small", "medium", "large"];
  * Which engine to run on.
  *
  * A smaller tier costs less per second, which makes "use a smaller tier" sound
- * like an obvious saving. It is not, because Dune bills the time the query
- * occupies the engine as well: the traders scan runs in 116s on large and was
- * still going after 25 minutes on medium, more than twelve times the engine
- * time for a lower rate, and past the point where the client gives up. So
- * traders stays on large. Measured, not assumed.
+ * like free money. It is not, because Dune bills the time the query occupies
+ * the engine as well: the traders scan finished in 116s on large and was still
+ * running after 25 minutes on medium -- more than twelve times the engine time
+ * for a lower rate, and past the point where the client gives up. So traders
+ * runs on large. Measured, not assumed.
  *
- * Holders is a balance lookup that finishes quickly on anything, so it runs on
- * small. DUNE_PERFORMANCE overrides both; a value that is not one of the three
- * tier names is ignored rather than sent.
+ * Holders is a balance lookup that finishes quickly on anything, so it takes
+ * the cheaper tier. Not `small`: that one is gated by subscription and answers
+ * `400 This performance tier is not available` on the plans this app targets.
+ *
+ * DUNE_PERFORMANCE overrides both. A value that is not one of the three tier
+ * names is ignored rather than sent, and a tier the account cannot use falls
+ * back to Dune's own default (see startExecution).
  */
 function enginePerformance(mode: string): Performance {
   const configured = process.env.DUNE_PERFORMANCE as Performance | undefined;
   if (configured && TIERS.includes(configured)) return configured;
-  return mode === "holders" ? "small" : "large";
+  return mode === "holders" ? "medium" : "large";
+}
+
+/**
+ * Start a run, surviving an engine tier the account is not entitled to. Dune
+ * rejects those with a 400 rather than quietly downgrading, and a whole trace
+ * failing over a tuning knob is a worse answer than a slightly different
+ * engine.
+ */
+async function startExecution(
+  client: DuneClient,
+  plan: { queryId: number; parameters: Record<string, string | number> },
+  mode: string,
+) {
+  const performance = enginePerformance(mode);
+  try {
+    return await client.execute(plan.queryId, plan.parameters, performance);
+  } catch (error) {
+    if (error instanceof DuneError && error.status === 400 && /performance tier/i.test(error.message)) {
+      return client.execute(plan.queryId, plan.parameters);
+    }
+    throw error;
+  }
 }
 
 /** Minutes since an ISO timestamp, or null if it is missing or unparseable. */
@@ -76,6 +103,31 @@ function minutesSince(iso: string | undefined): number | null {
   const then = Date.parse(iso);
   if (!Number.isFinite(then)) return null;
   return Math.max(0, Math.round((Date.now() - then) / 60_000));
+}
+
+/**
+ * Results for a finished execution, narrow if we can and wide if we must.
+ *
+ * Dune rejects a column name it does not recognise outright, and the query ids
+ * are overridable, so a deployment can be pointed at a copy whose columns do
+ * not match the list we ask for. Rather than fail the whole trace over it, fall
+ * back to reading everything: more datapoints than intended, but an answer.
+ */
+async function readResults(
+  client: DuneClient,
+  executionId: string,
+  limit: number,
+  columns: readonly string[] | undefined,
+) {
+  if (!columns) return client.results<Record<string, unknown>>(executionId, { limit });
+  try {
+    return await client.results<Record<string, unknown>>(executionId, { limit, columns });
+  } catch (error) {
+    if (error instanceof DuneError && error.status === 400) {
+      return client.results<Record<string, unknown>>(executionId, { limit });
+    }
+    throw error;
+  }
 }
 
 interface StoredResult {
@@ -104,11 +156,16 @@ async function reuseStored(
   if (maxAgeMinutes <= 0) return null;
 
   try {
-    const stored = await client.latestResults<Record<string, unknown>>(
-      plan.queryId,
-      plan.parameters,
-      { limit, columns },
-    );
+    const stored = await client
+      .latestResults<Record<string, unknown>>(plan.queryId, plan.parameters, { limit, columns })
+      .catch((error: unknown) => {
+        if (error instanceof DuneError && error.status === 400) {
+          return client.latestResults<Record<string, unknown>>(plan.queryId, plan.parameters, {
+            limit,
+          });
+        }
+        throw error;
+      });
     const rows = stored.result?.rows ?? [];
     if (rows.length === 0) return null;
 
@@ -146,7 +203,7 @@ export async function POST(request: Request) {
   // narrow set is a straight cut to the datapoints a trace is charged, and the
   // wide one is only paid for when someone actually asks for a CSV.
   const full = input.full === true;
-  const columns = full ? undefined : DISPLAY_COLUMNS[mode];
+  const columns = full ? undefined : DISPLAY_COLUMNS[mode][CHAINS[chain].kind];
 
   // `full` is part of the key: a narrow payload must never be served to a
   // caller that asked for every column.
@@ -222,7 +279,7 @@ export async function POST(request: Request) {
         }
       }
 
-      const started = await client.execute(plan.queryId, plan.parameters, enginePerformance(mode));
+      const started = await startExecution(client, plan, mode);
       recordIssued(started.execution_id, key);
       return NextResponse.json({
         status: "running",
@@ -239,10 +296,7 @@ export async function POST(request: Request) {
     }
 
     if (status.state === "QUERY_STATE_COMPLETED") {
-      const execution = await client.results<Record<string, unknown>>(executionId, {
-        limit,
-        columns,
-      });
+      const execution = await readResults(client, executionId, limit, columns);
       const rawRows = execution.result?.rows ?? [];
 
       // Only an execution this process started for these exact parameters may

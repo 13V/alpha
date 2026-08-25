@@ -86,48 +86,45 @@ function str(value: unknown): string | null {
  * The columns a result read asks for by default.
  *
  * Dune charges a read in datapoints -- rows times columns -- so every column
- * that reaches the browser without being looked at is paid for. This is what
+ * that reaches the browser without being looked at is paid for. These are what
  * the table renders, what the header needs, and what the wallet exports use.
- * It is deliberately not the full row: the twenty-odd columns left out are the
- * ones only the CSV and JSON exports touch, and those pull the full row on
- * demand (see the `full` flag on the trace route) rather than every trace
- * paying for them.
+ * The twenty-odd left out of the traders list are the ones only the CSV and
+ * JSON exports touch, and those pull the full row on demand (the `full` flag on
+ * the trace route) rather than every trace paying for them.
  *
- * A column named here that the query does not have is ignored by Dune, so the
- * two traders queries and the two holders queries can share one list each.
+ * These must name columns the query actually returns. Dune answers a name it
+ * does not recognise with `400 unknown column`, not by ignoring it -- so the
+ * lists are per chain kind, because the Solana and EVM holders queries do not
+ * return the same set. `npm run build` cannot catch a mismatch here; the route
+ * falls back to a full read if one slips through.
  */
-export const DISPLAY_COLUMNS: Record<Mode, readonly string[]> = {
-  traders: [
-    "rank",
-    "wallet",
-    "realized_pnl_usd",
-    "profit_multiple",
-    "realized_roi",
-    "avg_buy_mcap",
-    "avg_sell_mcap",
-    "usd_spent",
-    "usd_received",
-    "buy_coverage",
-    "first_trade",
-    "last_trade",
-    // constant per token, but the header reads them off the first row
-    "token_symbol",
-    "current_mcap",
-    "circulating_supply",
-  ],
-  holders: [
-    "rank",
-    "wallet",
-    "tokens_held",
-    "pct_supply_held",
-    "value_usd",
-    "first_trade",
-    "last_activity",
-    "token_symbol",
-    "current_mcap",
-    "circulating_supply",
-    "holder_count",
-  ],
+export const DISPLAY_COLUMNS: Record<Mode, Record<"svm" | "evm", readonly string[]>> = {
+  traders: {
+    svm: [
+      "rank", "wallet", "realized_pnl_usd", "profit_multiple", "realized_roi",
+      "avg_buy_mcap", "avg_sell_mcap", "usd_spent", "usd_received", "buy_coverage",
+      "first_trade", "last_trade",
+      // constant per token, but the header reads them off the first row
+      "token_symbol", "current_mcap", "circulating_supply",
+    ],
+    evm: [
+      "rank", "wallet", "realized_pnl_usd", "profit_multiple", "realized_roi",
+      "avg_buy_mcap", "avg_sell_mcap", "usd_spent", "usd_received", "buy_coverage",
+      "first_trade", "last_trade",
+      "token_symbol", "current_mcap", "circulating_supply",
+    ],
+  },
+  holders: {
+    // no value_usd, first_trade or current_mcap in this one
+    svm: [
+      "rank", "wallet", "tokens_held", "pct_supply_held", "last_activity",
+      "token_symbol", "circulating_supply", "holder_count",
+    ],
+    evm: [
+      "rank", "wallet", "tokens_held", "value_usd", "pct_supply_held",
+      "last_activity", "token_symbol", "circulating_supply", "holder_count",
+    ],
+  },
 };
 
 export function normalizeRow(row: Record<string, unknown>, index: number): WalletRow {
