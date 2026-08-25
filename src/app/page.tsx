@@ -13,6 +13,50 @@ const EVM_CHOICES: ChainId[] = ["base", "bnb", "ethereum"];
 const WINDOWS = [7, 30, 90, 365, 1095];
 const DAY_MS = 86_400_000;
 const KEY_STORE = "bagtrace-dune-key";
+const RUN_STORE = "bagtrace-inflight";
+
+/**
+ * A running execution is the expensive thing on Dune -- it is billed for the
+ * engine time it occupies whether or not anyone is left listening. Losing its
+ * id to a tab reload does not stop it; it just means the next attempt starts a
+ * second one and pays twice. So the id is parked in localStorage alongside the
+ * parameters it belongs to, and picked back up if those still match.
+ */
+interface InFlight {
+  executionId: string;
+  signature: string;
+  startedAt: number;
+}
+
+/** Identifies the run, so a resumed execution can never be served for other inputs. */
+function runSignature(p: { token: string; chain?: string; lookbackDays: number }): string {
+  return [p.token.toLowerCase(), p.chain ?? "", p.lookbackDays].join("|");
+}
+
+function readInFlight(signature: string): string | undefined {
+  try {
+    const raw = window.localStorage.getItem(RUN_STORE);
+    if (!raw) return undefined;
+    const saved = JSON.parse(raw) as InFlight;
+    // Dune drops an execution well before this; past it, resuming would just
+    // poll a dead id and delay the real run.
+    const fresh = Date.now() - saved.startedAt < 20 * 60_000;
+    if (saved.signature === signature && fresh) return saved.executionId;
+    window.localStorage.removeItem(RUN_STORE);
+  } catch {
+    /* storage blocked or corrupt -- start a fresh execution */
+  }
+  return undefined;
+}
+
+function writeInFlight(value: InFlight | null): void {
+  try {
+    if (value) window.localStorage.setItem(RUN_STORE, JSON.stringify(value));
+    else window.localStorage.removeItem(RUN_STORE);
+  } catch {
+    /* storage blocked -- the run just cannot be resumed */
+  }
+}
 
 interface Failure {
   error: string;
@@ -137,18 +181,29 @@ export default function Home() {
       };
     };
 
+    // An execution from a previous visit that is still running costs nothing
+    // extra to rejoin, and starting a second one for the same inputs would be
+    // billed all over again.
+    const signature = runSignature(params);
+    let executionId = readInFlight(signature);
+
     try {
-      let step = await call(params);
+      let step = await call(executionId ? { ...params, executionId } : params);
       const deadline = Date.now() + 15 * 60_000;
-      let executionId: string | undefined;
       let strikes = 0;
 
       for (;;) {
         if (step.kind === "ok") {
           strikes = 0;
           if (step.body.status !== "running") break;
-          executionId = step.body.executionId ?? executionId;
+          if (step.body.executionId && step.body.executionId !== executionId) {
+            executionId = step.body.executionId;
+            writeInFlight({ executionId, signature, startedAt: Date.now() });
+          }
         } else if (step.kind === "fail" || !executionId || ++strikes > 5) {
+          // A rejected resume means that execution is gone; drop it so the
+          // next attempt starts clean rather than retrying a dead id.
+          writeInFlight(null);
           setData(null);
           setFailure(step.failure);
           return;
@@ -157,7 +212,7 @@ export default function Home() {
           setData(null);
           setFailure({
             error: "gave up after 15 minutes",
-            hint: "the query is still running on dune. try a shorter window.",
+            hint: "the query is still running on dune and is kept, so tracing this again picks it up rather than paying for a second run.",
           });
           return;
         }
@@ -165,6 +220,7 @@ export default function Home() {
         step = await call(executionId ? { ...params, executionId } : params);
       }
 
+      writeInFlight(null);
       setData(step.body as ScanResponse);
     } catch (error) {
       setData(null);
