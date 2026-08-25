@@ -130,13 +130,21 @@ export class DuneClient {
     return this.request(`/execution/${executionId}/status`);
   }
 
+  /**
+   * `columns` is a cost control, not a convenience. Dune charges a result read
+   * in datapoints -- rows times columns -- so asking for the fifteen columns a
+   * screen uses instead of all thirty-five is a direct cut to the bill. It
+   * changes nothing about the execution, which has already happened and been
+   * charged; only what gets sent back.
+   */
   results<Row = Record<string, unknown>>(
     executionId: string,
-    opts: { limit?: number; offset?: number } = {},
+    opts: { limit?: number; offset?: number; columns?: readonly string[] } = {},
   ): Promise<ExecutionResults<Row>> {
     const search = new URLSearchParams();
     if (opts.limit != null) search.set("limit", String(opts.limit));
     if (opts.offset != null) search.set("offset", String(opts.offset));
+    if (opts.columns?.length) search.set("columns", opts.columns.join(","));
     const qs = search.toString();
     return this.request(`/execution/${executionId}/results${qs ? `?${qs}` : ""}`);
   }
@@ -154,10 +162,11 @@ export class DuneClient {
   latestResults<Row = Record<string, unknown>>(
     queryId: number,
     parameters: QueryParameters = {},
-    opts: { limit?: number } = {},
+    opts: { limit?: number; columns?: readonly string[] } = {},
   ): Promise<ExecutionResults<Row>> {
     const qs = new URLSearchParams();
     if (opts.limit != null) qs.set("limit", String(opts.limit));
+    if (opts.columns?.length) qs.set("columns", opts.columns.join(","));
     for (const [name, value] of Object.entries(parameters)) {
       qs.set(`params.${name}`, String(value));
     }

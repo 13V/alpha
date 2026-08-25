@@ -16,6 +16,8 @@ export interface ScanRequest {
   mode?: unknown;
   limit?: unknown;
   lookbackDays?: unknown;
+  /** Ask for every column, not just the ones the screen uses. Costs more datapoints. */
+  full?: unknown;
   minUsd?: unknown;
   executionId?: unknown;
   refresh?: unknown;

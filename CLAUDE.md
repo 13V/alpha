@@ -31,14 +31,19 @@ Dune's stored results are shared across everyone using the app.
 
 ## Dune: what costs money
 
-Billing is **engine time**, not rows. Reading a 100-wallet result is 3,500
-datapoints (rows x columns), about 3.5 credits on Free. The multi-minute scan
-that produced it is the entire rest of the bill. So, in order:
+Two meters. **Executions** are billed for the engine time they occupy and are
+most of the bill. **Result reads** are billed in datapoints -- rows x columns --
+and matter in the steady state, once reuse means most serves are reads. So, in
+order:
 
 1. Don't execute — `DUNE_RESULT_MAX_AGE_MINUTES` reuses a run Dune already has,
    and the client rejoins its own in-flight execution after a reload.
 2. Smaller engine tier. Unset, traders runs `medium`, holders `small`.
 3. A faster query, since the bill tracks engine seconds.
+4. Fewer columns per read. `DISPLAY_COLUMNS` in `src/lib/queries.ts` asks for
+   the 15 the screen and the wallet exports use rather than all 35 — 1,500
+   datapoints per 100 rows instead of 3,500. The CSV and JSON exports pass
+   `full: true`, which re-reads the same execution wide; nothing re-runs.
 
 **Run `scripts/explain.mjs` before any execution.** EXPLAIN scans no data, so it
 catches syntax and type errors that otherwise cost a full multi-minute run to

@@ -79,6 +79,9 @@ export default function Home() {
   const [data, setData] = useState<ScanResponse | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showHelp, setShowHelp] = useState(false);
+  // Inputs behind the rows currently on screen, so a CSV can re-read the same
+  // execution for its missing columns instead of running anything again.
+  const [lastRun, setLastRun] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     let stored: string | null = null;
@@ -221,12 +224,40 @@ export default function Home() {
       }
 
       writeInFlight(null);
+      setLastRun({ ...params, executionId: step.body.executionId ?? executionId });
       setData(step.body as ScanResponse);
     } catch (error) {
       setData(null);
       setFailure({ error: error instanceof Error ? error.message : "Request failed" });
     } finally {
       setLoading(false);
+    }
+  }
+
+  /**
+   * Every column, for the exports that need them.
+   *
+   * A trace reads only the columns the screen uses, because a result read is
+   * charged in datapoints -- rows times columns. The rest are fetched here,
+   * once, if someone actually asks for a CSV. Aimed at the execution that
+   * produced what is on screen, so this is a wider read of a run already paid
+   * for, never a new one. Returns null if it cannot, and the caller falls back
+   * to exporting what it has.
+   */
+  async function fetchFullRows(): Promise<ScanResponse["rows"] | null> {
+    if (!lastRun) return null;
+    try {
+      const res = await fetch("/api/trace", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...lastRun, full: true }),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json()) as { status?: string } & ScanResponse;
+      if (body.status !== "done" || !Array.isArray(body.rows)) return null;
+      return body.rows;
+    } catch {
+      return null;
     }
   }
 
@@ -427,6 +458,7 @@ export default function Home() {
               meta={data.meta}
               selectedCount={selected.size}
               onClearSelection={() => setSelected(new Set())}
+              onFullRows={fetchFullRows}
             />
 
             <ResultsTable

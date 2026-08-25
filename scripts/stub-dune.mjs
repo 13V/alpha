@@ -22,6 +22,12 @@ const AGE_MINUTES = Number(args["age-minutes"] ?? 12);
 
 const seen = [];
 
+function project(list, cols) {
+  if (!cols) return list;
+  const want = cols.split(",");
+  return list.map((r) => Object.fromEntries(want.filter((c) => c in r).map((c) => [c, r[c]])));
+}
+
 function rows(n = 3) {
   return Array.from({ length: n }, (_, i) => ({
     rank: i + 1,
@@ -56,7 +62,8 @@ const server = createServer((req, res) => {
       query_id: Number(url.pathname.split("/")[2]),
       state: "QUERY_STATE_COMPLETED",
       execution_ended_at: new Date(Date.now() - AGE_MINUTES * 60_000).toISOString(),
-      result: { rows: rows(), metadata: { column_names: [], row_count: 3, execution_time_millis: 41234 } },
+      result: { rows: project(rows(), url.searchParams.get("columns")),
+                metadata: { column_names: [], row_count: 3, execution_time_millis: 41234 } },
     });
   }
 
@@ -86,7 +93,8 @@ const server = createServer((req, res) => {
       execution_id: "01STUBFRESHEXECUTION",
       query_id: 8385958,
       state: "QUERY_STATE_COMPLETED",
-      result: { rows: rows(), metadata: { column_names: [], row_count: 3, execution_time_millis: 298000 } },
+      result: { rows: project(rows(), url.searchParams.get("columns")),
+                metadata: { column_names: [], row_count: 3, execution_time_millis: 298000 } },
     });
   }
 

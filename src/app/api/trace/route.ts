@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { cacheGet, cacheKey, cacheSet } from "@/lib/cache";
 import { DuneClient, DuneError } from "@/lib/dune";
-import { normalizeRow, summaryFromRows } from "@/lib/queries";
+import { DISPLAY_COLUMNS, normalizeRow, summaryFromRows } from "@/lib/queries";
 import { envInt, isScanFailure, resolveScan, type ScanRequest } from "@/lib/scan";
 import type { ScanResponse } from "@/lib/types";
 
@@ -96,6 +96,7 @@ async function reuseStored(
   client: DuneClient,
   plan: { queryId: number; parameters: Record<string, string | number> },
   limit: number,
+  columns: readonly string[] | undefined,
 ): Promise<StoredResult | null> {
   const maxAgeMinutes = envInt("DUNE_RESULT_MAX_AGE_MINUTES", 720);
   if (maxAgeMinutes <= 0) return null;
@@ -104,7 +105,7 @@ async function reuseStored(
     const stored = await client.latestResults<Record<string, unknown>>(
       plan.queryId,
       plan.parameters,
-      { limit },
+      { limit, columns },
     );
     const rows = stored.result?.rows ?? [];
     if (rows.length === 0) return null;
@@ -139,7 +140,15 @@ export async function POST(request: Request) {
 
   // Keyed on query parameters only — never the API key, which must not
   // influence or leak across cached results.
-  const key = cacheKey([chain, mode, token, limit, lookbackDays, minUsd]);
+  // Exports need every column; the screen needs fifteen of them. Reading the
+  // narrow set is a straight cut to the datapoints a trace is charged, and the
+  // wide one is only paid for when someone actually asks for a CSV.
+  const full = input.full === true;
+  const columns = full ? undefined : DISPLAY_COLUMNS[mode];
+
+  // `full` is part of the key: a narrow payload must never be served to a
+  // caller that asked for every column.
+  const key = cacheKey([chain, mode, token, limit, lookbackDays, minUsd, full ? "full" : "lean"]);
   const ttl = envInt("CACHE_TTL_SECONDS", 1800);
 
   const client = new DuneClient(apiKey);
@@ -198,7 +207,7 @@ export async function POST(request: Request) {
         // so a token anyone has already traced comes back in one round trip
         // instead of the minutes a cold Solana scan takes. A 404 — nobody has
         // run it, or the SQL changed since — just falls through to executing.
-        const reused = await reuseStored(client, plan, limit);
+        const reused = await reuseStored(client, plan, limit, columns);
         if (reused) {
           const payload = payloadFrom(reused.rows, {
             executionId: reused.executionId,
@@ -228,7 +237,10 @@ export async function POST(request: Request) {
     }
 
     if (status.state === "QUERY_STATE_COMPLETED") {
-      const execution = await client.results<Record<string, unknown>>(executionId, { limit });
+      const execution = await client.results<Record<string, unknown>>(executionId, {
+        limit,
+        columns,
+      });
       const rawRows = execution.result?.rows ?? [];
 
       // Only an execution this process started for these exact parameters may
