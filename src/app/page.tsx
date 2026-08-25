@@ -561,6 +561,38 @@ export default function Home() {
               <b>terminal</b> and <b>photon</b> take the address list — one click either way,
               named <code>14.1x - TICKER</code> so you know who just fired.
             </p>
+
+            <div className="callout">
+              <h3>auto window — it scans the token&rsquo;s life, not three years</h3>
+              <p>
+                dune charges for the seconds a query holds its engine, so scanning back further
+                than a token has existed is most of what a search costs. <b>auto</b> starts at
+                seven days and only reaches further back if the token is actually older.
+              </p>
+              <table className="ledger">
+                <tbody>
+                  <tr>
+                    <th scope="row">1095d</th>
+                    <td>411.3s</td>
+                    <td>the window you&rsquo;d have clicked</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">365d</th>
+                    <td>97.8s</td>
+                    <td>same 100 wallets, same order</td>
+                  </tr>
+                  <tr data-win="yes">
+                    <th scope="row">7d</th>
+                    <td>13.5s</td>
+                    <td>same again — the token was 5 days old</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p className="fineprint">
+                measured on one token, same query, same key. thirty times the bill for an
+                identical answer. pick a window by hand and it runs exactly that.
+              </p>
+            </div>
           </div>
         )}
       </main>

@@ -803,3 +803,92 @@ tbody tr[data-sel="true"] td.pnl[data-sign="neg"] { background: #fce4e9; }
   overflow-x: auto;
   white-space: pre;
 }
+
+/* ---------------------------------------------------------------------------
+   Landing callout — the auto-window explanation. Same idiom as the rest of the
+   app: 2px ink border, hard offset shadow, one accent block of colour.
+   --------------------------------------------------------------------------- */
+.callout {
+  margin-top: 0.9rem;
+  max-width: 44rem;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  background: var(--bg);
+  box-shadow: 3px 3px 0 var(--ink);
+  overflow: hidden;
+}
+
+.callout h3 {
+  margin: 0;
+  padding: 0.42rem 0.7rem;
+  border-bottom: 2px solid var(--ink);
+  background: var(--blue);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--ink);
+}
+
+.callout > p {
+  margin: 0;
+  padding: 0.6rem 0.7rem 0.5rem;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.callout .fineprint {
+  padding: 0.15rem 0.7rem 0.6rem;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.ledger {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.ledger th,
+.ledger td {
+  padding: 0.28rem 0.7rem;
+  text-align: left;
+  border-top: 1px solid var(--line-soft);
+}
+
+.ledger th {
+  width: 4.2rem;
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* the engine-time column is the point of the table, so it reads as a figure */
+.ledger td:first-of-type {
+  width: 5.5rem;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.ledger td:last-child { color: var(--text-3); }
+
+/* the rung auto actually stops on */
+.ledger tr[data-win="yes"] { background: var(--cream-soft); }
+.ledger tr[data-win="yes"] th,
+.ledger tr[data-win="yes"] td:first-of-type { color: var(--up); }
+.ledger tr[data-win="yes"] td:last-child { color: var(--text-2); }
+
+@media (max-width: 640px) {
+  .ledger td:last-child { display: none; }
+}
+
+/* The results table styles td globally — mono, zebra striping, hover. None of
+   that belongs to this little ledger, so it is opted out explicitly. */
+.ledger td:last-child { font-family: var(--sans); letter-spacing: 0; }
+.callout .ledger tbody tr:nth-child(even) td,
+.callout .ledger tbody tr:hover td { background: transparent; }
+.callout .ledger tbody tr[data-win="yes"] td,
+.callout .ledger tbody tr[data-win="yes"]:hover td { background: var(--cream-soft); }
+.callout .fineprint { border-top: 2px solid var(--ink); padding-top: 0.45rem; }
