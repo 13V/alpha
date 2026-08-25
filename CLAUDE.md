@@ -76,11 +76,16 @@ find, and prints the two numbers that predict cost.
   2.52x faster; warm against warm it was 1.07x. Never compare a candidate
   against a baseline that ran at a different cache temperature. Run both warm,
   then reverse the order.
-- **The window is the biggest lever on cost, by far.** Same query, same key, on
-  a token five days old: 1095d took 411.3s of engine time, 365d took 97.8s, 7d
-  took 13.5s -- all three returning the same 100 wallets in the same order. The
-  client walks a ladder (`LADDER` in `src/app/page.tsx`) and stops at the first
-  window whose earliest trade is not against the edge.
+- **The window is a large lever on cost, but not a fixed multiple.** Same query,
+  same key, on a token five days old: 1095d 411.3s, 365d 97.8s, 7d 13.5s -- all
+  three returning the same 100 wallets in the same order, which is the solid
+  part and was diffed row by row. The *times* are not solid: those runs went
+  widest-first, so each warmed the cache for the next. A later 7d run on the
+  same token took 82s, six times the 13.5s. Same trap as the entry above, caught
+  the second time only because a real user run disagreed with the number that
+  had been put on the landing page. Quote a range, not a multiple.
+  The client walks a ladder (`LADDER` in `src/app/page.tsx`) and stops at the
+  first window whose earliest trade is not against the edge.
 
 ### Measured and rejected — do not retry
 

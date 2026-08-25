@@ -11,11 +11,16 @@ import type { ScanResponse } from "@/lib/types";
 
 const EVM_CHOICES: ChainId[] = ["base", "bnb", "ethereum"];
 /**
- * Widening the window costs real money and usually buys nothing. Measured on a
- * five-day-old token: 7d took 13.5s of engine time, 365d took 97.8s and 1095d
- * took 411.3s -- for byte-identical rankings, because 99.5% of that scan was
- * looking for trades that could not exist. Dune bills the engine time, so the
- * window is the single largest lever on what a search costs.
+ * Widening the window costs real money and usually buys nothing: a scan that
+ * reaches back further than the token existed spends that time finding trades
+ * that cannot be there, and Dune bills the engine seconds either way.
+ *
+ * On one five-day-old token the same query returned byte-identical rankings at
+ * 1095d, 365d and 7d, which is the part that matters and was diffed row by row.
+ * The engine times were 411s, 98s and 14s -- but those three ran back to back
+ * in that order, so each warmed the cache for the next and the decline conflates
+ * two effects. A later 7d run on the same token came back at 82s. Treat the
+ * window as an order-of-magnitude lever, not a fixed multiple.
  *
  * Auto walks up this ladder and stops at the first rung that covers the token,
  * so a young token is one cheap scan and an old one pays the wide scan it
@@ -577,32 +582,35 @@ export default function Home() {
             <div className="callout">
               <h3>auto window — it scans the token&rsquo;s life, not three years</h3>
               <p>
-                dune charges for the seconds a query holds its engine, so scanning back further
-                than a token has existed is most of what a search costs. <b>auto</b> starts at
-                seven days and only reaches further back if the token is actually older.
+                dune charges for the seconds a query holds its engine, and a window that reaches
+                back further than a token has existed spends most of them finding nothing.{" "}
+                <b>auto</b> starts at seven days and only reaches further back if the token is
+                actually older.
               </p>
               <table className="ledger">
                 <tbody>
                   <tr>
                     <th scope="row">1095d</th>
-                    <td>411.3s</td>
+                    <td>411s</td>
                     <td>the window you&rsquo;d have clicked</td>
                   </tr>
                   <tr>
                     <th scope="row">365d</th>
-                    <td>97.8s</td>
+                    <td>98s</td>
                     <td>same 100 wallets, same order</td>
                   </tr>
                   <tr data-win="yes">
                     <th scope="row">7d</th>
-                    <td>13.5s</td>
+                    <td>14–82s</td>
                     <td>same again — the token was 5 days old</td>
                   </tr>
                 </tbody>
               </table>
               <p className="fineprint">
-                measured on one token, same query, same key. thirty times the bill for an
-                identical answer. pick a window by hand and it runs exactly that.
+                one token, one query. the rankings were identical at all three windows — that
+                part we diffed row by row. the seconds move around a lot with dune&rsquo;s cache
+                and with how much the token has traded since, so read them as an order of
+                magnitude, not a promise. pick a window by hand and it runs exactly that.
               </p>
             </div>
           </div>
